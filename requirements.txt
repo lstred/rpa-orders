@@ -1,0 +1,27 @@
+# ---- UI (native Windows desktop) ----
+PySide6==6.7.2
+
+# ---- Database ----
+SQLAlchemy==2.0.31
+pyodbc==5.1.0
+pandas==2.2.2
+
+# ---- Document ingestion ----
+PyMuPDF==1.24.7        # fast PDF text + page rendering (import name: fitz)
+pdfplumber==0.11.2     # table-aware PDF extraction
+python-docx==1.1.2     # Word documents
+openpyxl==3.1.5        # Excel workbooks
+Pillow==10.4.0         # image handling
+pytesseract==0.3.10    # OCR bridge (requires Tesseract OS install)
+
+# ---- Matching / validation ----
+rapidfuzz==3.9.4       # high-performance fuzzy matching + confidence scores
+
+# ---- AI extraction (optional providers) ----
+anthropic==0.34.2
+openai==1.40.6
+
+# ---- Security / config ----
+keyring==25.2.1        # OS-native secret storage (Windows Credential Manager)
+cryptography==43.0.0
+python-dateutil==2.9.0

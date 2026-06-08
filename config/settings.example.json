@@ -1,0 +1,41 @@
+{
+  "app_name": "Orders RPA Bridge",
+  "environment": "production",
+
+  "nrf_sql": {
+    "driver": "ODBC Driver 18 for SQL Server",
+    "server": "NRFVMSSQL04",
+    "database": "NRF_REPORTS",
+    "trusted_connection": true,
+    "encrypt": false,
+    "_comment": "Windows Trusted Connection only. No SQL logins. Must be on NRF network/VPN."
+  },
+
+  "ai": {
+    "enabled": false,
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "_comment": "API key is NOT stored here. It lives in Windows Credential Manager via keyring. Set it on the Settings page.",
+    "max_output_tokens": 4096,
+    "temperature": 0.0
+  },
+
+  "ocr": {
+    "tesseract_cmd": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+    "language": "eng",
+    "auto_ocr_threshold_chars": 40,
+    "_comment": "If a PDF page yields fewer than threshold chars of embedded text, fall back to OCR."
+  },
+
+  "fuzzy": {
+    "auto_accept_score": 95,
+    "review_floor_score": 70,
+    "_comment": "Scores >= auto_accept are auto-confirmed. Between floor and auto require user review. Below floor are flagged unmatched."
+  },
+
+  "paths": {
+    "inbox": "inbox",
+    "processed": "processed",
+    "exports": "exports"
+  }
+}
