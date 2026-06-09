@@ -176,34 +176,38 @@ Drag fields to reorder them.</p>
 <div class="step">
 <h3>Step 4 — Resolve and teach</h3>
 <p>Any field that isn't <span class="pill-ok">OK</span> needs attention before export.
-Required fields with unresolved status <b>block</b> the export.</p>
+Required ★ fields with unresolved status <b>block</b> the export.</p>
 
-<h3>How to resolve a field</h3>
+<h3>Three ways to resolve a field</h3>
 <ol>
-  <li><b>Click "🔍 Find" next to any unresolved field</b> — a dialog opens showing
-      the full document text. Use the search box to find the value, select it, and
-      click <b>Use selected text</b>. The anchor label is auto-detected.
-      Check <i>Save anchor pattern</i> to make the app find it automatically next time.</li>
-  <li><b>Type directly</b> in the <i>Resolved value</i> column — for simple corrections.</li>
-  <li><b>Pick a candidate</b> from the <i>Candidates / options</i> dropdown for fuzzy fields —
-      ranked matches from the warehouse.</li>
+  <li><b>🔍 Find (inline)</b> — click the blue <b>Find</b> button next to the field.
+      A banner appears above the document text on the left:
+      <i>"Finding: [Field] — select the value below, then click Use selection."</i><br>
+      Click and drag over the value in the document, click <b>✔ Use selection</b>.
+      You're then asked whether to save an anchor so the app finds it automatically
+      next time — this is how you teach the app new document layouts.</li>
+  <li><b>Type directly</b> in the <i>Resolved value</i> column — the status updates live.</li>
+  <li><b>Pick from Candidates</b> — fuzzy warehouse matches ranked by similarity;
+      selecting one copies it to the Resolved value column.</li>
 </ol>
 
+<div class="tip"><b>Semi-structured documents</b> (e.g. items with a heading then
+details below it): use <b>Find</b> for each field, select the value, and save the
+anchor (the label/heading just before the value). Once all anchors are saved, future
+documents from the same source are handled automatically.</div>
+
 <h3>Teaching the app</h3>
-<p>When you click <b>Confirm &amp; learn matches</b>:</p>
+<p>Click <b>✔ Confirm &amp; learn</b>:</p>
 <ul>
-  <li>All your edits are confirmed (status → OK).</li>
-  <li>Fuzzy match confirmations are saved to <b>Learned Matches</b> — the app will
-      resolve that text automatically next time (e.g. "12oz Berber" always maps to
-      your SKU code).</li>
-  <li>Anchors saved during  Find in document  are stored in the layout's Template.</li>
+  <li>Applies all edits (everything becomes OK)</li>
+  <li>Saves fuzzy-match confirmations to memory — next time the same vendor
+      description appears, it resolves instantly</li>
 </ul>
 
-<h3>Saving a template</h3>
-<p>Click <b>Save as template</b> after processing a new document layout.
-Give it the name of the source (e.g. "MX Vendor", "Customer XYZ Orders").
-Next time a document with the same structure arrives, the app automatically
-applies all the saved field locators — no mapping needed.</p>
+<h3>Saving a layout template</h3>
+<p>Click <b>💾 Save layout</b> after processing a new source for the first time.
+Next time a document with the same structure arrives, all saved anchors and field
+patterns are applied automatically — no manual work.</p>
 </div>
 
 <div class="step">

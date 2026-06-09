@@ -56,7 +56,8 @@ The full warehouse reference is stored in the agent's repo memory (`nrf_reports_
 
 ```
 app/
-  core/         config, paths, logging, security (keyring), local_store (SQLite), database (NRF)
+  core/         config, paths, logging, security (keyring), local_store (SQLite),
+                database (NRF), schema_cache (NRF table/column lists for UI dropdowns)
   ingestion/    document_loader (dispatch) + pdf/docx/excel/image extractors + ocr
   extraction/   ai_extractor (Anthropic/OpenAI), template_matcher, field_extractor
   validation/   sql_lookups (exact/fuzzy, safe idents), validator (status engine)
@@ -78,12 +79,36 @@ app/
 `missing` (required, no value) · `skipped`. A field is **blocking** when it is
 required and not `ok`; export is refused while any blocking field remains.
 
+STATUS_MISSING/REVIEW/UNMATCHED are all promoted to STATUS_OK when the user types
+a value in the Resolved value column (live update via `_on_resolved_changed`) or
+when Confirm & learn is clicked.
+
+## Process page UX (`app/ui/pages/process_page.py`)
+
+- **Find mode is inline** — clicking 🔍 Find activates the DocumentViewer's find
+  banner (blue bar above the text). User selects text directly in the main viewer,
+  clicks "✔ Use selection". No separate dialog.
+- **AnchorSaveDialog** is a simple QDialog shown *after* a selection is applied —
+  asks if the user wants to save the anchor for future auto-extraction.
+- **AI badge** in controls card shows enabled/disabled state with provider/model;
+  clicking navigates to Settings.
+- **Export** is wrapped in try/except — errors surface in a QMessageBox with
+  actionable advice.
+- `_on_resolved_changed()` promotes field status live as user types.
+
 ## Export contract (`app/export/exporter.py`)
 
 JSON with `schema_version`, `task`, `ready_to_export`, `blocking_fields`, and a
 `fields` object of `{resolved_value, status, confidence, ...}` per field. Power
 Automate branches on `ready_to_export`. Keep this schema stable; bump
 `schema_version` on breaking changes.
+
+## Theme / dialogs (`app/ui/theme.py`)
+
+The global `* { color: ... }` rule applies to all widgets including QMessageBox.
+**All QDialog/QMessageBox/QInputDialog classes must have explicit dark background
+styling** in the stylesheet — see the "Dialogs" section in `stylesheet()`.
+Without this the text is invisible on Windows' default light dialog background.
 
 ## Running
 
@@ -106,3 +131,6 @@ path on the Settings page.
   is off by default.
 - Every AI-extracted value must still pass warehouse validation + user confirmation
   before it can be exported.
+- Do not add `_maybe_asdict` or similar unused helpers — keep each file lean.
+- Multi-item document support (repeating blocks) is a planned future feature;
+  current approach: use Find + anchor per field for each repeating item type.

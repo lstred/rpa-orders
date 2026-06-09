@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -98,7 +97,3 @@ def export_csv(payload: dict[str, Any], out_path: str | None = None) -> str:
 
 def _slug(text: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in (text or "task")).strip("_")[:60]
-
-
-def _maybe_asdict(obj: Any) -> Any:
-    return asdict(obj) if is_dataclass(obj) else obj

@@ -182,4 +182,55 @@ def stylesheet() -> str:
         background-color: {p.PANEL}; color: {p.TEXT};
         border: 1px solid {p.BORDER}; padding: 6px; border-radius: 6px;
     }}
+
+    /* ---------- Dialogs (QMessageBox, QInputDialog, QDialog) ---------- */
+    QDialog {{
+        background-color: {p.BG_ELEV};
+    }}
+    QMessageBox {{
+        background-color: {p.BG_ELEV};
+    }}
+    QMessageBox QLabel {{
+        color: {p.TEXT};
+        background: transparent;
+        min-width: 320px;
+    }}
+    QMessageBox QPushButton {{
+        min-width: 80px;
+    }}
+    QInputDialog QLabel {{
+        color: {p.TEXT};
+        background: transparent;
+    }}
+    QInputDialog QLineEdit {{
+        min-width: 360px;
+    }}
+
+    /* ---------- GroupBox ---------- */
+    QGroupBox {{
+        border: 1px solid {p.BORDER};
+        border-radius: 8px;
+        margin-top: 12px;
+        padding-top: 10px;
+        color: {p.TEXT_MUTED};
+        font-size: 12px;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        left: 10px;
+        padding: 0 6px;
+        color: {p.TEXT_MUTED};
+    }}
+
+    /* ---------- Find-mode banner ---------- */
+    QFrame#findBanner {{
+        background-color: #0f2a4a;
+        border: 1px solid {p.ACCENT};
+        border-radius: 8px;
+        padding: 6px 10px;
+    }}
+    QFrame#findBanner QLabel {{
+        color: {p.TEXT};
+        background: transparent;
+    }}
     """
