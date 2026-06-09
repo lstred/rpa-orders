@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core import database
+from app.core import schema_cache
 from app.core.config import Config
 from app.core.security import delete_secret, get_secret, has_secret, set_secret
 from app.extraction.ai_extractor import ANTHROPIC_KEY, OPENAI_KEY
@@ -101,12 +102,16 @@ class SettingsPage(QWidget):
         test_btn.clicked.connect(self._test_connection)
         save_btn = QPushButton("Save connection")
         save_btn.clicked.connect(self._save_connection)
+        refresh_schema_btn = QPushButton("Refresh schema (columns)")
+        refresh_schema_btn.setToolTip("Update the SQL table/column lists used in the field editor dropdowns.")
+        refresh_schema_btn.clicked.connect(self._refresh_schema)
 
         btns = QWidget()
         h = QHBoxLayout(btns)
         h.setContentsMargins(0, 0, 0, 0)
         h.addWidget(test_btn)
         h.addWidget(save_btn)
+        h.addWidget(refresh_schema_btn)
         h.addStretch(1)
 
         return card(title, form_w, btns, self.conn_status)
@@ -117,6 +122,12 @@ class SettingsPage(QWidget):
         Config.set("nrf_sql.driver", self.driver_edit.text().strip())
         database.reset_engine()
         self.conn_status.setText("Saved. Connection settings updated.")
+
+    def _refresh_schema(self) -> None:
+        self._save_connection()
+        ok, msg = schema_cache.refresh_from_db()
+        self.conn_status.setText(("✓ " if ok else "ℹ ") + msg)
+        self.conn_status.setStyleSheet(f"color: {'#3fb950' if ok else '#d29922'};")
 
     def _test_connection(self) -> None:
         self._save_connection()

@@ -1,8 +1,10 @@
 """Main application window: sidebar navigation + stacked pages."""
 from __future__ import annotations
 
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
@@ -21,12 +23,12 @@ from app.ui.pages.tasks_page import TasksPage
 from app.ui.pages.templates_page import TemplatesPage
 
 NAV = [
-    ("dashboard", "  Dashboard"),
-    ("process", "  Process Document"),
-    ("tasks", "  Tasks & Fields"),
-    ("templates", "  Templates"),
-    ("settings", "  Settings"),
-    ("instructions", "  Instructions"),
+    ("dashboard",     "  Dashboard"),
+    ("process",       "  Process Document"),
+    ("tasks",         "  Tasks & Fields"),
+    ("templates",     "  Templates"),
+    ("settings",      "  Settings"),
+    ("instructions",  "  Instructions"),
 ]
 
 
@@ -71,6 +73,34 @@ class MainWindow(QWidget):
         root.addWidget(self.stack, 1)
 
         self.navigate("dashboard")
+        self.center_on_primary()
+
+    def center_on_primary(self) -> None:
+        """Place the window centered on the primary screen and bring it to front.
+
+        Multi-monitor setups can otherwise open the window off-screen (e.g. on a
+        monitor with negative coordinates), making it look like nothing launched.
+        """
+        screen = QGuiApplication.primaryScreen() or (
+            QGuiApplication.screens()[0] if QGuiApplication.screens() else None
+        )
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        size = self.frameGeometry()
+        x = available.x() + (available.width() - size.width()) // 2
+        y = available.y() + (available.height() - size.height()) // 2
+        # Keep within the screen bounds (never negative relative to this screen).
+        x = max(available.x(), x)
+        y = max(available.y(), y)
+        self.move(x, y)
+
+    def bring_to_front(self) -> None:
+        """Restore, raise, and activate the window so it is visible to the user."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        QApplication.processEvents()
 
     def _sidebar(self) -> QWidget:
         frame = QFrame()

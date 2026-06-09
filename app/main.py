@@ -25,6 +25,8 @@ def main() -> int:
 
     window = MainWindow()
     window.show()
+    window.center_on_primary()
+    window.bring_to_front()
     log.info("Orders RPA Bridge started.")
     return app.exec()
 
