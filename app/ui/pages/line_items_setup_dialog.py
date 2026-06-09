@@ -138,9 +138,18 @@ class LineItemsSetupDialog(QDialog):
         lv = QVBoxLayout(left)
         lv.setContentsMargins(10, 10, 10, 10)
         lv.setSpacing(6)
-        doc_lbl = QLabel("Document text  (read-only excerpt)")
+        doc_lbl = QLabel("Document text — exactly what the AI analyzes")
         doc_lbl.setObjectName("cardTitle")
         lv.addWidget(doc_lbl)
+        char_count = len(self.document_text)
+        shown = min(15000, char_count)
+        note = QLabel(
+            f"📌  This is the raw text extracted from your PDF — the same text shown in the "
+            f"Document Text panel.  The AI receives the first {shown:,} of {char_count:,} characters."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color:#8b949e; font-size:11px; padding-bottom:4px;")
+        lv.addWidget(note)
         self._doc_view = QPlainTextEdit()
         self._doc_view.setReadOnly(True)
         self._doc_view.setPlainText(self.document_text[:15000])

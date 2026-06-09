@@ -18,7 +18,7 @@ pytesseract==0.3.10    # OCR bridge (requires Tesseract OS install)
 rapidfuzz==3.9.4       # high-performance fuzzy matching + confidence scores
 
 # ---- AI extraction (optional providers) ----
-anthropic==0.34.2
+anthropic>=0.40.0      # >=0.40 required for httpx 0.28+ compatibility
 openai==1.40.6
 
 # ---- Security / config ----
