@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.ui.pages.dashboard_page import DashboardPage
+from app.ui.pages.exports_page import ExportsPage
 from app.ui.pages.instructions_page import InstructionsPage
 from app.ui.pages.process_page import ProcessPage
 from app.ui.pages.settings_page import SettingsPage
@@ -27,6 +28,7 @@ NAV = [
     ("process",       "  Process Document"),
     ("tasks",         "  Tasks & Fields"),
     ("templates",     "  Templates"),
+    ("exports",       "  Exports"),
     ("settings",      "  Settings"),
     ("instructions",  "  Instructions"),
 ]
@@ -53,6 +55,7 @@ class MainWindow(QWidget):
         self.process = ProcessPage()
         self.tasks = TasksPage(on_tasks_changed=self._on_tasks_changed)
         self.templates = TemplatesPage()
+        self.exports = ExportsPage()
         self.settings = SettingsPage()
         self.instructions = InstructionsPage()
 
@@ -61,6 +64,7 @@ class MainWindow(QWidget):
             "process": self.process,
             "tasks": self.tasks,
             "templates": self.templates,
+            "exports": self.exports,
             "settings": self.settings,
             "instructions": self.instructions,
         }
@@ -149,6 +153,8 @@ class MainWindow(QWidget):
             self.process.refresh_tasks()
         elif key == "templates":
             self.templates.refresh_tasks()
+        elif key == "exports":
+            self.exports.refresh()
 
     def _on_tasks_changed(self) -> None:
         # Guard: this can fire during initial page construction before every

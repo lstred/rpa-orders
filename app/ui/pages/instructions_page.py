@@ -229,12 +229,35 @@ field to key data into the ERP.</p>
 <hr>
 
 <h2>Using AI extraction</h2>
-<p>AI is <b>off by default</b> and only used when no template mapping exists for a field.
-Enable it on the <b>Settings</b> page:</p>
+
+<h3>How to know if AI is helping</h3>
+<p>Look at the <b>AI badge</b> in the top-right of the Process Document page:</p>
+<table>
+<tr><td><b>🤖 AI: Anthropic Claude ✓</b> (green)</td>
+    <td>AI is configured and ready — key is saved, model is set.</td></tr>
+<tr><td><b>🤖 AI: standby</b> (blue)</td>
+    <td>AI is on but wasn't needed this run — a saved template or anchor handled all fields.
+        This is the best outcome: fast, free, and private.</td></tr>
+<tr><td><b>🤖 AI: filled 3 field(s)</b> (bright green)</td>
+    <td>AI actively found values for those fields this run. Hover over cells in the
+        <i>Extracted</i> column to see which ones used AI vs. template.</td></tr>
+<tr><td><b>🤖 AI: Off</b> (grey)</td>
+    <td>AI is disabled. Only saved templates and anchor patterns are used.</td></tr>
+</table>
+
+<div class="tip"><b>AI is a fallback, not the primary tool.</b>
+The order of preference is:<br>
+<b>① Saved anchor/template</b> (free, instant, private) →
+<b>② Learned match memory</b> (free, instant) →
+<b>③ AI</b> (costs API credits, but finds things templates haven't learned yet).<br>
+Once you teach the app a layout by saving anchors, AI won't be needed for that document source again.</div>
+
+<h3>How to enable AI</h3>
 <ol>
+  <li>Go to <b>Settings</b>.</li>
   <li>Choose a provider: <b>Anthropic</b> (Claude) or <b>OpenAI</b> (GPT).</li>
-  <li>Enter your API key — it is stored in Windows Credential Manager, never in files.</li>
-  <li>Enable the toggle and click Save.</li>
+  <li>Enter your API key — stored in Windows Credential Manager, never in source files.</li>
+  <li>Check <b>Enable AI extraction</b> and click <b>Save AI settings</b>.</li>
 </ol>
 
 <table>
@@ -244,12 +267,24 @@ Enable it on the <b>Settings</b> page:</p>
     <td>~$3 in / $15 out</td></tr>
 <tr><td>Claude Opus 4</td><td>Hardest or messiest documents</td><td>~$15 in / $75 out</td></tr>
 <tr><td>Claude Haiku</td><td>Simple, clean documents — cheapest Claude</td><td>Very low</td></tr>
-<tr><td>GPT-4o</td><td>Strong alternative, vision capable</td><td>~$2.50 in / $10 out</td></tr>
+<tr><td>GPT-4o</td><td>Strong alternative; also handles images</td><td>~$2.50 in / $10 out</td></tr>
 <tr><td>GPT-4o-mini</td><td>Simple structured docs, lowest cost</td><td>~$0.15 in / $0.60 out</td></tr>
 </table>
 
 <div class="warn">Enabling AI sends document text to the provider's API.
-For confidential documents, use deterministic templates instead — they are free and private.</div>
+For confidential documents, use saved templates and anchors instead — they are free and private.</div>
+
+<h2>Finding your exported files</h2>
+<p>All exported files are saved to:</p>
+<p><code>Documents\Orders RPA Bridge\Exports</code></p>
+<p>This is your normal Windows Documents folder — open it in Explorer any time.
+You can also:</p>
+<ul>
+  <li>After export: click <b>📂 Open exports folder</b> or <b>👁 View in Exports</b>
+      (shown in the Process page after a successful export).</li>
+  <li>Go to the <b>Exports</b> page (sidebar) to browse and preview all past exports.</li>
+  <li>The <b>Dashboard</b> shows the exports folder path and a quick-open button.</li>
+</ul>
 
 <hr>
 
@@ -267,13 +302,20 @@ For confidential documents, use deterministic templates instead — they are fre
     <td>Install Tesseract OCR (OS-level install from github.com/UB-Mannheim/tesseract/wiki),
         then set its path in Settings.</td></tr>
 <tr><td>AI extraction returns wrong values</td>
-    <td>All AI values still pass warehouse validation. Use Find in document to correct a value,
-        then click Confirm &amp; learn — the correction is remembered.</td></tr>
+    <td>All AI values still pass warehouse validation. Use Find to correct a value,
+        then click Confirm &amp; learn — the correction is remembered forever.</td></tr>
 <tr><td>Field always shows REVIEW / low confidence</td>
     <td>The fuzzy threshold may be too high. Lower it in Settings → Fuzzy thresholds.
         Or confirm the match once — it becomes a Learned Match and resolves instantly next time.</td></tr>
 <tr><td>"Task has no fields" warning on Process page</td>
     <td>Go to Tasks &amp; Fields, select the task, add at least one field, and click Save task.</td></tr>
+<tr><td>Can't find exported files</td>
+    <td>Go to Exports in the sidebar, or click the
+        <b>📂 Open exports folder</b> button on the Dashboard.
+        Files are in Documents\Orders RPA Bridge\Exports.</td></tr>
+<tr><td>AI badge shows "standby" even though AI is enabled</td>
+    <td>This is correct — a saved template or anchor handled all fields this time.
+        AI only runs when there's no other way to find a value. This saves API costs.</td></tr>
 </table>
 
 <hr>
@@ -281,7 +323,7 @@ For confidential documents, use deterministic templates instead — they are fre
 <h2>Best practices</h2>
 <ul>
   <li><b>Set up templates early.</b> Process each document source once, map any
-      unresolved fields using Find in document, and save as a template. Future
+      unresolved fields using Find, and save as a template. Future
       documents from that source need zero manual work.</li>
   <li><b>Use Confirm &amp; learn consistently.</b> Every confirmed fuzzy match makes
       the app smarter. After a few weeks, most documents resolve fully automatically.</li>

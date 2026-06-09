@@ -1,6 +1,8 @@
 """Dashboard: at-a-glance status and recent activity."""
 from __future__ import annotations
 
+import subprocess
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -15,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core import paths
 from app.core.config import Config
 from app.core.local_store import LocalStore
 from app.core.security import has_secret
@@ -69,7 +72,33 @@ class DashboardPage(QWidget):
         self.recent.horizontalHeader().setStretchLastSection(True)
         self.recent.verticalHeader().setVisible(False)
         self.recent.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        return card(label("Recent documents", "cardTitle"), self.recent)
+
+        # Exports folder quick access
+        paths.ensure_dirs()
+        exports_count = len(list(paths.EXPORTS_DIR.glob("*.json")))
+        exports_label = QLabel(
+            f"📁  Exports saved to:  {paths.EXPORTS_DIR}"
+            + (f"  ({exports_count} file{'s' if exports_count != 1 else ''})" if exports_count else "  (empty)")
+        )
+        exports_label.setObjectName("muted")
+        exports_label.setWordWrap(True)
+        exports_label.setStyleSheet("font-size:12px; padding:2px 0;")
+
+        open_btn = QPushButton("📂  Open exports folder")
+        open_btn.setToolTip(str(paths.EXPORTS_DIR))
+        open_btn.clicked.connect(lambda: subprocess.Popen(["explorer.exe", str(paths.EXPORTS_DIR)]))
+
+        exports_row = QHBoxLayout()
+        exports_row.addWidget(exports_label, 1)
+        exports_row.addWidget(open_btn)
+        exports_w = QWidget()
+        exports_w.setLayout(exports_row)
+
+        return card(
+            label("Recent documents", "cardTitle"),
+            exports_w,
+            self.recent,
+        )
 
     def refresh(self) -> None:
         # stats
@@ -81,6 +110,8 @@ class DashboardPage(QWidget):
         tasks = self.store.list_tasks()
         templates = self.store.all_templates()
         learned_total = sum(len(self.store.list_learned(t["id"])) for t in tasks)
+        paths.ensure_dirs()
+        exports_total = len(list(paths.EXPORTS_DIR.glob("*.json")))
         ai_on = bool(Config.get("ai.enabled", False)) and (
             has_secret(ANTHROPIC_KEY) or has_secret(OPENAI_KEY)
         )
@@ -91,13 +122,16 @@ class DashboardPage(QWidget):
             self._stat("Learned matches", str(learned_total), "#3fb950"), 0, 2
         )
         self.stats_grid.addWidget(
+            self._stat("Exports", str(exports_total), "#3fb950" if exports_total else "#8b949e"), 0, 3
+        )
+        self.stats_grid.addWidget(
             self._stat(
                 "AI extraction",
                 "On" if ai_on else "Off",
                 "#3fb950" if ai_on else "#8b949e",
             ),
             0,
-            3,
+            4,
         )
 
         # recent docs

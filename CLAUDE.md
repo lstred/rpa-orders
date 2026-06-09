@@ -90,11 +90,24 @@ when Confirm & learn is clicked.
   clicks "✔ Use selection". No separate dialog.
 - **AnchorSaveDialog** is a simple QDialog shown *after* a selection is applied —
   asks if the user wants to save the anchor for future auto-extraction.
-- **AI badge** in controls card shows enabled/disabled state with provider/model;
-  clicking navigates to Settings.
-- **Export** is wrapped in try/except — errors surface in a QMessageBox with
-  actionable advice.
+- **AI badge** shows three states: "configured ✓" (ready), "standby" (on but template
+  handled all fields), "filled N field(s)" (AI actively contributed this run).
+- **Extraction method tooltip** on the Extracted column — hover to see if a value came
+  from AI, anchor, regex, cell, or was not found.
+- **Post-export buttons** — `📂 Open exports folder` and `👁 View in Exports` appear
+  in the result panel immediately after a successful export.
 - `_on_resolved_changed()` promotes field status live as user types.
+
+## Exports (`app/core/paths.py` + `app/ui/pages/exports_page.py`)
+
+- **EXPORTS_DIR = `~/Documents/Orders RPA Bridge/Exports`** — always visible in
+  Explorer, not subject to Windows Store Python sandbox virtualization.
+- `_migrate_old_exports()` in `ensure_dirs()` copies any existing exports from the
+  old `LOCALAPPDATA/OrdersRpaBridge/exports` location (which Python can access via
+  sandbox transparency) to the new Documents location. Idempotent.
+- **ExportsPage**: left=file list (newest first), right=parsed field preview table,
+  buttons: Open file / Show in Explorer / Copy path. Refreshed on nav.
+- Dashboard shows exports count + "Open exports folder" button.
 
 ## Export contract (`app/export/exporter.py`)
 

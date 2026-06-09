@@ -450,6 +450,7 @@ class ProcessPage(QWidget):
         # Active find-mode state
         self._find_key: str | None = None
         self._find_le: QLineEdit | None = None
+        self._last_export_json: str | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 24)
@@ -672,6 +673,23 @@ class ProcessPage(QWidget):
         self.summary.setWordWrap(True)
         rv.addWidget(self.summary)
 
+        # Post-export quick-access row — hidden until export succeeds
+        self._post_export_row = QWidget()
+        per = QHBoxLayout(self._post_export_row)
+        per.setContentsMargins(0, 4, 0, 0)
+        per.setSpacing(8)
+        self._open_folder_btn = QPushButton("📂  Open exports folder")
+        self._open_folder_btn.setToolTip("Open the folder in Explorer")
+        self._open_folder_btn.clicked.connect(self._open_exports_folder)
+        self._view_export_btn = QPushButton("👁  View in Exports")
+        self._view_export_btn.setToolTip("Go to the Exports page to preview this file")
+        self._view_export_btn.clicked.connect(self._go_to_exports)
+        per.addWidget(self._open_folder_btn)
+        per.addWidget(self._view_export_btn)
+        per.addStretch(1)
+        self._post_export_row.hide()
+        rv.addWidget(self._post_export_row)
+
         self._results_wrap.hide()
         v.addWidget(self._results_wrap, 1)
         return w
@@ -773,10 +791,18 @@ class ProcessPage(QWidget):
             )
 
     def _go_to_settings(self) -> None:
-        # Navigate to settings page via the main window
         win = self.window()
         if hasattr(win, "navigate"):
             win.navigate("settings")
+
+    def _open_exports_folder(self) -> None:
+        _paths.ensure_dirs()
+        subprocess.Popen(["explorer.exe", str(_paths.EXPORTS_DIR)])
+
+    def _go_to_exports(self) -> None:
+        win = self.window()
+        if hasattr(win, "navigate"):
+            win.navigate("exports")
 
     def _browse(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -890,6 +916,7 @@ class ProcessPage(QWidget):
         self.result = result
         self.progress.setVisible(False)
         self.process_btn.setEnabled(True)
+        self._post_export_row.hide()  # reset for new run
 
         doc = result.loaded_doc
         parts = [f"{doc.file_type.upper()}  ·  {doc.char_count:,} chars"]
@@ -899,8 +926,32 @@ class ProcessPage(QWidget):
             parts.append(
                 f"template: \"{result.matched_template['name']}\" ({result.match_score:.0f}% match)"
             )
-        elif result.extraction.ai_used:
-            parts.append("AI extraction used")
+        if result.extraction.ai_used:
+            ai_fields = [k for k, ef in result.extraction.fields.items() if ef.method == "ai" and ef.value]
+            parts.append(f"AI filled {len(ai_fields)} field(s)")
+            # Update AI badge to show it actually did something
+            self._ai_badge.setText(f"🤖 AI: filled {len(ai_fields)} field(s)")
+            self._ai_badge.setStyleSheet(
+                "font-size:12px; padding:4px 10px; border-radius:6px; "
+                "background:#1a3a10; color:#3fb950; border:1px solid #2a5a18;"
+            )
+            self._ai_badge.setToolTip(
+                f"AI extracted values for {len(ai_fields)} field(s) this run.\n"
+                f"Fields: {', '.join(ai_fields)}\n"
+                "Hover over the Extracted column to see which fields used AI."
+            )
+        elif ai_enabled():
+            # AI is on but wasn't needed
+            self._ai_badge.setText("🤖 AI: standby")
+            self._ai_badge.setStyleSheet(
+                "font-size:12px; padding:4px 10px; border-radius:6px; "
+                "background:#1a2230; color:#5a8abf; border:1px solid #2a3a50;"
+            )
+            self._ai_badge.setToolTip(
+                "AI is configured and ready, but wasn't needed this time.\n"
+                "A saved template or anchor pattern handled all the fields.\n"
+                "AI only runs when there's no other way to find a field's value."
+            )
         elif result.extraction.ai_message:
             msg = result.extraction.ai_message
             if "disabled" not in msg.lower():
@@ -950,11 +1001,26 @@ class ProcessPage(QWidget):
             )
             self.table.setItem(r, 0, name_item)
 
-            # ── Col 1: extracted value ──
+            # ── Col 1: extracted value ── (tooltip shows HOW it was found)
             raw = fv.raw_value or ""
             raw_item = QTableWidgetItem(raw)
             raw_item.setForeground(QColor("#8b949e"))
-            raw_item.setToolTip(f"Extracted: {raw!r}")
+            ef = self.result.extraction.fields.get(fv.field_key) if self.result else None
+            _method_labels = {
+                "ai":     "🤖 AI extracted",
+                "anchor": "🔗 Anchor pattern (auto)",
+                "regex":  "📐 Regex pattern",
+                "cell":   "📊 Spreadsheet cell",
+                "fixed":  "📌 Fixed / constant",
+                "none":   "— No mapping (not found)",
+            }
+            method_lbl = _method_labels.get(ef.method if ef else "none", ef.method if ef else "none")
+            conf_str = f"{ef.confidence:.0f}% confidence" if ef and ef.confidence > 0 else ""
+            raw_item.setToolTip(
+                f"Extracted:  {raw!r}\n"
+                f"Source:  {method_lbl}"
+                + (f"\nConfidence:  {conf_str}" if conf_str else "")
+            )
             self.table.setItem(r, 1, raw_item)
 
             # ── Col 2: status ──
@@ -1289,13 +1355,21 @@ class ProcessPage(QWidget):
             pass
 
         self.steps_bar.set_done(4)
-        self._set_step("done", "Export complete.")
+        self._last_export_json = json_path
+        self._post_export_row.show()
+        self._set_step("done", f"✓  Export complete — saved to {_paths.EXPORTS_DIR}")
+        self.status_label.setStyleSheet("color:#3fb950; font-weight:600;")
+        import os.path
+        fname = os.path.basename(json_path)
         QMessageBox.information(
             self,
             "Exported successfully",
-            f"Files written for Power Automate:\n\n{json_path}\n{csv_path}\n\n"
-            "Power Automate should branch on  ready_to_export = true  and read\n"
-            "each field's  resolved_value  from the JSON.",
+            f"Files written for Power Automate:\n\n"
+            f"  {fname}\n"
+            f"  {os.path.basename(csv_path)}\n\n"
+            f"Saved in:\n  {_paths.EXPORTS_DIR}\n\n"
+            "Click  📂 Open exports folder  to see the files in Explorer.\n"
+            "Click  👁 View in Exports  to preview the contents inside this app.",
         )
 
 
