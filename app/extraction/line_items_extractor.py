@@ -43,13 +43,15 @@ def extract_line_items(
     """Parse repeating item blocks from a document.
 
     Tries pdfplumber table data first (most reliable), falls back to text.
+    Deduplicates by (order_num, item_num) so items appearing on multiple
+    sections/pages of the same PDF are counted only once.
     Returns an empty list when no recognisable item pattern is found.
     """
     if tables:
         items = _from_tables(tables)
         if items:
-            return items
-    return _from_text(text)
+            return _deduplicate(items)
+    return _deduplicate(_from_text(text))
 
 
 def items_detected(text: str, tables: list | None = None) -> bool:
@@ -342,6 +344,8 @@ def _parse_text_item_line(line: str) -> dict | None:
     item_num = left_tok[0]
     if not item_num.isdigit():
         return None
+    if int(item_num) > 999:          # item numbers are never 4+ digits
+        return None
 
     sku_tok = left_tok[1:]
     # Strip optional em-dash artefact after item number
@@ -399,7 +403,16 @@ def _parse_text_roll_line(line: str) -> dict | None:
 
 
 # ── Classifiers & utilities ────────────────────────────────────────────────
-
+def _deduplicate(items: list[dict]) -> list[dict]:
+    """Remove duplicate items (same order + item number) keeping first occurrence."""
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict] = []
+    for item in items:
+        key = (item.get("order_num", ""), item.get("item_num", ""))
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
 def _is_color_line(line: str) -> bool:
     """Color/style names: start with a letter, no slash, not an order number."""
     if not line or not line[0].isalpha():

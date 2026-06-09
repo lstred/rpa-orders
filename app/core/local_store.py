@@ -109,6 +109,14 @@ class LocalStore:
         self._local = threading.local()
         with self._conn() as conn:
             conn.executescript(SCHEMA)
+            # Migrations: add columns that didn't exist in older schema versions
+            for stmt in (
+                "ALTER TABLE templates ADD COLUMN line_items_hint TEXT DEFAULT ''",
+            ):
+                try:
+                    conn.execute(stmt)
+                except Exception:  # column already exists
+                    pass
 
     @classmethod
     def instance(cls) -> "LocalStore":
@@ -257,6 +265,22 @@ class LocalStore:
     def delete_template(self, template_id: int) -> None:
         with self._conn() as conn:
             conn.execute("DELETE FROM templates WHERE id = ?", (template_id,))
+
+    def get_line_items_hint(self, template_id: int) -> str:
+        """Return the saved AI line-items description hint for this template."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT line_items_hint FROM templates WHERE id = ?", (template_id,)
+            ).fetchone()
+            return (row["line_items_hint"] or "") if row else ""
+
+    def save_line_items_hint(self, template_id: int, hint: str) -> None:
+        """Persist a natural-language line-items extraction hint to this template."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE templates SET line_items_hint = ?, updated_at = ? WHERE id = ?",
+                (hint.strip(), _now(), template_id),
+            )
 
     # ---------------- field mappings ----------------
     def set_field_mappings(

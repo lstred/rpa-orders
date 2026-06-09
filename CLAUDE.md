@@ -109,6 +109,9 @@ No setup required — runs automatically after every document process.
 2. **Text parsing fallback** — for scanned/OCR'd PDFs with no structured tables.
    Uses `" - "` as the item separator and requires the SKU to contain 2+ uppercase
    letters (filters out totals, page refs, etc.).  Reports `source: "text"`.
+3. **Deduplication** — after either path, items are deduplicated by `(order_num,
+   item_num)` so items appearing on multiple sections/pages of the same PDF
+   (invoice + packing slip) are counted only once.
 
 Each item dict has: `order_num, item_num, sku, color, full_name (sku+color combined),
 qty, price, unit, extended_price, account, roll_count, total_yards, source, rolls[]`.
@@ -122,9 +125,31 @@ The **Line Items card** in the Process page (below the field table):
 - Hint bar updates dynamically: shows normal tip OR "click to fill [field name]" when
   Find mode is active.
 - `📤 Export items CSV` writes `*_items.csv` (one row per item) independently.
+- `🤖 AI Setup` opens the AI Line Items Setup dialog (see below).
 - Items are also embedded in the main JSON (`line_items` array, rolls excluded).
 
 **process_page.py imports required:** `import subprocess`, `from app.core import paths as _paths`, `QMenu`.
+
+## AI Line Items Setup (`app/ui/pages/line_items_setup_dialog.py`)
+
+Interactive AI-powered dialog to refine line-item extraction when the automatic
+parser produces incorrect results.
+
+- Opened via **🤖 AI Setup** button in the Line Items card.
+- Left panel: scrollable document text (read-only).
+- Right panel: multi-turn AI chat + instruction input + live preview table.
+- User describes the structure in plain English (or leaves blank for auto-analysis).
+- AI (Anthropic or OpenAI) re-parses the document text and returns structured JSON.
+- Preview shows the AI's proposed items before applying.
+- **Apply** — updates the current extraction (not saved; only for this session).
+- **Save description + Apply** — saves the description to `templates.line_items_hint`
+  so it is reused whenever this document layout is processed in the future.
+- Multi-turn: subsequent analysis turns include prior conversation for refinement.
+- Requires AI to be enabled in Settings; gracefully degrades with a message if not.
+
+Storage: `LocalStore.save_line_items_hint(template_id, hint)` /
+`get_line_items_hint(template_id)` — new `line_items_hint TEXT` column added via
+migration in `LocalStore.__init__`.
 
 
 - **EXPORTS_DIR = `~/Documents/Orders RPA Bridge/Exports`** — always visible in

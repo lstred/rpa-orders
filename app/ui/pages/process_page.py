@@ -63,6 +63,7 @@ from app.extraction.field_extractor import extract_fields
 from app.extraction.line_items_extractor import extract_line_items
 from app.extraction.template_matcher import best_template
 from app.ingestion.document_loader import load_document
+from app.ui.pages.line_items_setup_dialog import LineItemsSetupDialog
 from app.ui.widgets import hline, label, page_header, row, status_pill
 from app.validation import validator
 from app.validation.validator import STATUS_MISSING, STATUS_OK, STATUS_REVIEW, STATUS_UNMATCHED
@@ -1154,9 +1155,18 @@ class ProcessPage(QWidget):
             "Items are also included in the main JSON export."
         )
         self._export_items_btn.clicked.connect(self._export_items_csv)
+        self._ai_setup_btn = QPushButton("🤖  AI Setup")
+        self._ai_setup_btn.setFixedHeight(30)
+        self._ai_setup_btn.setToolTip(
+            "Describe the document structure in plain English.\n"
+            "The AI will re-parse the document and show a preview.\n"
+            "Click Save to remember the description for this layout."
+        )
+        self._ai_setup_btn.clicked.connect(self._open_ai_setup)
         hdr.addWidget(self._items_title)
         hdr.addWidget(self._items_source_lbl)
         hdr.addStretch(1)
+        hdr.addWidget(self._ai_setup_btn)
         hdr.addWidget(self._export_items_btn)
         v.addLayout(hdr)
 
@@ -1358,8 +1368,29 @@ class ProcessPage(QWidget):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Export failed", str(exc))
 
+    def _open_ai_setup(self) -> None:
+        """Open the AI Line Items Setup dialog."""
+        if not self.result:
+            QMessageBox.information(
+                self, "No document loaded",
+                "Process a document first, then click  🤖 AI Setup  to refine the line items.",
+            )
+            return
+        template_id = (
+            self.result.matched_template.get("id")
+            if self.result.matched_template else None
+        )
+        dlg = LineItemsSetupDialog(
+            parent=self,
+            document_text=self.result.loaded_doc.full_text,
+            current_items=self._line_items,
+            template_id=template_id,
+        )
+        if dlg.exec():
+            self._line_items = dlg.accepted_items
+            self._populate_line_items(dlg.accepted_items)
 
-    def _on_resolved_changed(self, table_row: int) -> None:
+
         """Live status update when user edits the resolved value field."""
         meta = self._row_meta.get(table_row)
         if not meta or not self.result:

@@ -233,4 +233,30 @@ def stylesheet() -> str:
         color: {p.TEXT};
         background: transparent;
     }}
+
+    /* ---------- Context menus (QMenu) ---------- */
+    QMenu {{
+        background-color: {p.PANEL};
+        color: {p.TEXT};
+        border: 1px solid {p.BORDER};
+        border-radius: 8px;
+        padding: 4px 0px;
+    }}
+    QMenu::item {{
+        padding: 7px 24px 7px 16px;
+        border-radius: 5px;
+        margin: 1px 4px;
+    }}
+    QMenu::item:selected {{
+        background-color: {p.ACCENT};
+        color: white;
+    }}
+    QMenu::item:disabled {{
+        color: {p.TEXT_MUTED};
+    }}
+    QMenu::separator {{
+        height: 1px;
+        background: {p.BORDER};
+        margin: 4px 8px;
+    }}
     """
