@@ -299,6 +299,8 @@ class LineItemsSetupDialog(QDialog):
 
         self._analyze_btn.setEnabled(False)
         self._progress.setVisible(True)
+        # Store instruction so _on_ai_done can record it correctly
+        self._last_instruction = instruction
 
         self._thread = QThread()
         self._worker = _AIWorker(self.document_text, instruction, self._conversation)
@@ -314,16 +316,28 @@ class LineItemsSetupDialog(QDialog):
         self._progress.setVisible(False)
         self._analyze_btn.setEnabled(True)
 
-        # Store the turn for multi-turn context
-        instruction = self._instruction.toPlainText().strip()
+        # Record the turn for multi-turn context
+        instruction = getattr(self, "_last_instruction", "")
         self._conversation.append({"role": "user", "content": instruction or "(auto-analyze)"})
         self._conversation.append({"role": "assistant", "content": ai_text})
 
         n = len(items)
-        ai_reply = (
-            f"Found {n} item{'s' if n != 1 else ''}.\n"
-            + (f"First few: {', '.join(it.get('full_name','') for it in items[:3])}" if items else "No items detected.")
-        )
+        if n > 0:
+            preview = ", ".join(it.get("full_name", "") for it in items[:3])
+            extra = f" …+{n-3} more" if n > 3 else ""
+            ai_reply = f"Found {n} item{'s' if n != 1 else ''}: {preview}{extra}"
+        else:
+            # Show a truncated excerpt of what the AI actually returned so the user
+            # knows what happened and can correct their instruction.
+            excerpt = ai_text[:600].replace("<", "&lt;").replace(">", "&gt;")
+            if len(ai_text) > 600:
+                excerpt += " …"
+            ai_reply = (
+                f"⚠️  Found 0 items — could not parse the response into line items.\n\n"
+                f"The AI replied:\n{excerpt}\n\n"
+                "Try rephrasing your description and clicking Analyze again, or clear the "
+                "conversation and start fresh."
+            )
         self._chat_append("ai", ai_reply)
 
         self._pending_items = items

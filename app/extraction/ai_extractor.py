@@ -216,13 +216,22 @@ def analyze_line_items_with_ai(
     )
 
     # Build the user turn
+    # On first turn: include full document text + schema.
+    # On follow-up turns: include only the new instruction + schema (doc already in context).
+    is_first_turn = not conversation
     user_turn_parts = []
     if user_instruction:
         user_turn_parts.append(f"INSTRUCTION:\n{user_instruction}\n")
-    user_turn_parts.append(
-        f"DOCUMENT TEXT (first 20 000 chars):\n\"\"\"\n"
-        f"{document_text[:20000]}\n\"\"\"\n"
-    )
+    if is_first_turn:
+        user_turn_parts.append(
+            f"DOCUMENT TEXT (first 20 000 chars):\n\"\"\"\n"
+            f"{document_text[:20000]}\n\"\"\"\n"
+        )
+    else:
+        user_turn_parts.append(
+            "(Document text already provided in first message.\n"
+            "Apply the correction above to the same document.)\n"
+        )
     user_turn_parts.append(_LINE_ITEMS_SCHEMA)
     user_content = "\n".join(user_turn_parts)
 
@@ -248,42 +257,58 @@ def analyze_line_items_with_ai(
 
 
 def _parse_items_json(raw: str) -> list[dict]:
-    """Parse a JSON array of line items from AI output."""
+    """Parse a JSON array of line items from AI output.
+
+    Handles: plain JSON array, code-fenced JSON, prose-before-JSON,
+    objects with an 'items' key, and other common AI output variations.
+    """
     raw = (raw or "").strip()
-    # Strip code fences
-    if raw.startswith("```"):
-        raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.MULTILINE)
-        raw = raw.replace("```", "").strip()
+
+    # Strip ALL code fences no matter where they appear
+    raw = re.sub(r"```[a-z]*\n?", "", raw).replace("```", "").strip()
+
+    # Try finding a JSON array first
     start, end = raw.find("["), raw.rfind("]")
-    if start == -1 or end == -1:
-        # Maybe AI returned an object with an items key
-        oc, oe = raw.find("{"), raw.rfind("}")
-        if oc != -1 and oe != -1:
-            try:
-                obj = json.loads(raw[oc : oe + 1])
+    if start != -1 and end != -1 and end > start:
+        try:
+            data = json.loads(raw[start : end + 1])
+            if isinstance(data, list):
+                return _normalise_items(data)
+        except json.JSONDecodeError:
+            pass  # fall through to object check
+
+    # Try finding a JSON object (AI may wrap array in {"items": [...]})
+    oc, oe = raw.find("{"), raw.rfind("}")
+    if oc != -1 and oe != -1 and oe > oc:
+        try:
+            obj = json.loads(raw[oc : oe + 1])
+            if isinstance(obj, dict):
                 for v in obj.values():
                     if isinstance(v, list):
-                        return _normalise_items(v)
-            except json.JSONDecodeError:
-                pass
-        return []
-    try:
-        data = json.loads(raw[start : end + 1])
-    except json.JSONDecodeError:
-        return []
-    return _normalise_items(data) if isinstance(data, list) else []
+                        result = _normalise_items(v)
+                        if result:
+                            return result
+        except json.JSONDecodeError:
+            pass
+
+    return []
 
 
 def _normalise_items(raw_list: list) -> list[dict]:
     """Ensure every item has the expected keys and correct types."""
-    import re as _re
     result = []
     for item in raw_list:
         if not isinstance(item, dict):
             continue
-        item_num = str(item.get("item_num", "")).strip()
-        if not item_num or not item_num.isdigit() or int(item_num) > 999:
+        # Accept item_num as int, float, or string — just convert to a clean int
+        raw_num = item.get("item_num", "")
+        try:
+            num = int(float(str(raw_num).strip().rstrip(".")))
+        except (ValueError, TypeError):
             continue
+        if num < 1 or num > 999:
+            continue
+        item_num = str(num)
         sku = str(item.get("sku", "")).strip()
         color = str(item.get("color", "")).strip()
         result.append({
