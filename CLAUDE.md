@@ -98,7 +98,34 @@ when Confirm & learn is clicked.
   in the result panel immediately after a successful export.
 - `_on_resolved_changed()` promotes field status live as user types.
 
-## Exports (`app/core/paths.py` + `app/ui/pages/exports_page.py`)
+## Line Items (`app/extraction/line_items_extractor.py`)
+
+Automatically detects and parses repeating order-item blocks from carpet/rug PDFs.
+No setup required — runs automatically after every document process.
+
+**Extraction priority:**
+1. **pdfplumber table data** (`doc.tables`) — preferred; finds the "SYD" column as an
+   anchor and parses item/color/roll rows by position.  Reports `source: "table"`.
+2. **Text parsing fallback** — for scanned/OCR'd PDFs with no structured tables.
+   Uses `" - "` as the item separator and requires the SKU to contain 2+ uppercase
+   letters (filters out totals, page refs, etc.).  Reports `source: "text"`.
+
+Each item dict has: `order_num, item_num, sku, color, full_name (sku+color combined),
+qty, price, unit, extended_price, account, roll_count, total_yards, source, rolls[]`.
+
+The **Line Items card** in the Process page (below the field table):
+- Shows count + source ("from PDF table" / "from text") in the card header.
+- **Full Description** column = SKU + Color combined (e.g. "POSH BIO-60 GINGERBREAD").
+- **Right-click** any cell → context menu lists all header validation fields → click to
+  fill that field with the clicked value.
+- **Click any cell during Find mode** → fills the active Find field immediately.
+- Hint bar updates dynamically: shows normal tip OR "click to fill [field name]" when
+  Find mode is active.
+- `📤 Export items CSV` writes `*_items.csv` (one row per item) independently.
+- Items are also embedded in the main JSON (`line_items` array, rolls excluded).
+
+**process_page.py imports required:** `import subprocess`, `from app.core import paths as _paths`, `QMenu`.
+
 
 - **EXPORTS_DIR = `~/Documents/Orders RPA Bridge/Exports`** — always visible in
   Explorer, not subject to Windows Store Python sandbox virtualization.

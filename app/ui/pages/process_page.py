@@ -21,7 +21,9 @@ dialog follows so the app finds it automatically next time.
 """
 from __future__ import annotations
 
+import os.path
 import re
+import subprocess
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,6 +42,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -51,6 +54,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core import paths as _paths
 from app.core.config import Config
 from app.core.local_store import LocalStore
 from app.export import exporter
@@ -983,7 +987,10 @@ class ProcessPage(QWidget):
         self._update_summary()
 
         # Auto-detect repeating line items
-        self._line_items = extract_line_items(result.loaded_doc.full_text)
+        self._line_items = extract_line_items(
+            result.loaded_doc.full_text,
+            result.loaded_doc.tables,
+        )
         self._populate_line_items(self._line_items)
 
     # ──────────────────────────────────────────────────────────────
@@ -1111,6 +1118,18 @@ class ProcessPage(QWidget):
     # Line items auto-detection
     # ──────────────────────────────────────────────────────────────
 
+    # Column indices in _items_table (update _ITEM_COLS together)
+    _IC_ORDER = 0
+    _IC_ITEM  = 1
+    _IC_FULL  = 2   # Full Description (SKU + Color)
+    _IC_QTY   = 3
+    _IC_PRICE = 4
+    _IC_EXT   = 5
+    _IC_ACCT  = 6
+    _IC_ROLLS = 7
+    _ITEM_COLS = ["Order #", "#", "Full Description (SKU + Color)",
+                  "Qty", "Price/SYD", "Extended ($)", "Account #", "Rolls"]
+
     def _line_items_card(self) -> QWidget:
         """Full-width card shown below the splitter when repeating items are detected."""
         self._items_card = QFrame()
@@ -1123,81 +1142,204 @@ class ProcessPage(QWidget):
         hdr = QHBoxLayout()
         self._items_title = QLabel("Line Items")
         self._items_title.setObjectName("cardTitle")
+        self._items_source_lbl = QLabel("")
+        self._items_source_lbl.setObjectName("muted")
+        self._items_source_lbl.setStyleSheet("font-size:11px;")
         self._export_items_btn = QPushButton("📤  Export items CSV")
         self._export_items_btn.setFixedHeight(30)
         self._export_items_btn.setEnabled(False)
         self._export_items_btn.setToolTip(
             "Write a CSV with one row per line item.\n"
             "Power Automate can loop over this file to key each item into the ERP.\n"
-            "The same items are also embedded in the main JSON export."
+            "Items are also included in the main JSON export."
         )
         self._export_items_btn.clicked.connect(self._export_items_csv)
         hdr.addWidget(self._items_title)
+        hdr.addWidget(self._items_source_lbl)
         hdr.addStretch(1)
         hdr.addWidget(self._export_items_btn)
         v.addLayout(hdr)
 
         # Hint bar
-        hint = QLabel(
-            "💡  These line items were <b>auto-detected</b> from the repeating pattern in the "
-            "document — no setup needed. "
-            "Click  <b>📤 Export items CSV</b>  to get a one-row-per-item file Power Automate "
-            "can loop over. Items are also included in the main  📤 Export for RPA  JSON."
-        )
-        hint.setWordWrap(True)
-        hint.setTextFormat(Qt.RichText)
-        hint.setStyleSheet(
+        self._items_hint = QLabel()
+        self._items_hint.setWordWrap(True)
+        self._items_hint.setTextFormat(Qt.RichText)
+        self._items_hint.setStyleSheet(
             "background:#141e2b; border-left:3px solid #2f81f7; "
             "padding:8px 12px; border-radius:6px; color:#c9d1d9; font-size:12px;"
         )
-        v.addWidget(hint)
+        self._update_items_hint()
+        v.addWidget(self._items_hint)
 
         # Items table
-        _COLS = ["Order #", "Item #", "SKU", "Color / Style", "Qty (rolls)",
-                 "Price / SYD", "Extended ($)", "Account #"]
-        self._items_table = QTableWidget(0, len(_COLS))
-        self._items_table.setHorizontalHeaderLabels(_COLS)
+        self._items_table = QTableWidget(0, len(self._ITEM_COLS))
+        self._items_table.setHorizontalHeaderLabels(self._ITEM_COLS)
         self._items_table.verticalHeader().setVisible(False)
         self._items_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._items_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._items_table.setMaximumHeight(230)
+        self._items_table.setMaximumHeight(260)
         ihdr = self._items_table.horizontalHeader()
         ihdr.setSectionResizeMode(QHeaderView.ResizeToContents)
-        ihdr.setSectionResizeMode(3, QHeaderView.Stretch)   # Color stretches
+        ihdr.setSectionResizeMode(self._IC_FULL, QHeaderView.Stretch)
+        # Right-click → fill a header field
+        self._items_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._items_table.customContextMenuRequested.connect(self._items_context_menu)
+        # Single click during Find mode → fill the active Find field
+        self._items_table.cellClicked.connect(self._items_cell_clicked)
         v.addWidget(self._items_table)
 
         self._items_card.hide()
         return self._items_card
+
+    def _update_items_hint(self) -> None:
+        if self._find_key:
+            self._items_hint.setText(
+                "🎯  <b>Find mode active</b> — click any cell in this table to fill "
+                "<b>" + (self.result.report.fields[self._find_key].display_name
+                          if self.result and self._find_key in self.result.report.fields
+                          else self._find_key) + "</b> with that value.  "
+                "Or right-click any cell to choose which field to fill."
+            )
+        else:
+            self._items_hint.setText(
+                "💡  Line items were <b>auto-detected</b> from the document — no setup needed.  "
+                "<b>Right-click</b> any row to use a value in a header field.  "
+                "Click  <b>📤 Export items CSV</b>  for a one-row-per-item file Power Automate "
+                "can loop over."
+            )
 
     def _populate_line_items(self, items: list) -> None:
         self._items_table.setRowCount(0)
         for item in items:
             r = self._items_table.rowCount()
             self._items_table.insertRow(r)
+            full_name = item.get("full_name") or (
+                item.get("sku", "") + " " + item.get("color", "")
+            ).strip()
             values = [
                 item.get("order_num", ""),
                 item.get("item_num", ""),
-                item.get("sku", ""),
-                item.get("color", ""),
+                full_name,
                 item.get("qty", ""),
                 item.get("price", ""),
                 item.get("extended_price", ""),
                 item.get("account", ""),
+                str(item.get("roll_count", len(item.get("rolls", [])))),
             ]
             for col, val in enumerate(values):
                 cell = QTableWidgetItem(str(val))
                 cell.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 self._items_table.setItem(r, col, cell)
+            # Store full item dict on row for context menu
+            self._items_table.item(r, 0).setData(Qt.UserRole, item)
 
         n = len(items)
         if n:
+            source = items[0].get("source", "text") if items else "text"
+            source_txt = "(from PDF table)" if source == "table" else "(from text)"
             self._items_title.setText(
-                f"Line Items — {n} item{'s' if n != 1 else ''} auto-detected"
+                f"Line Items — {n} item{'s' if n != 1 else ''} detected"
             )
+            self._items_source_lbl.setText(source_txt)
             self._export_items_btn.setEnabled(True)
             self._items_card.show()
         else:
             self._items_card.hide()
+
+    def _items_cell_clicked(self, table_row: int, col: int) -> None:
+        """During Find mode: single-clicking any items table cell fills the active field."""
+        if not self._find_key:
+            return  # Not in Find mode — ignore
+        cell = self._items_table.item(table_row, col)
+        if cell and cell.text().strip():
+            self._on_field_value_selected(cell.text().strip(), "")
+
+    def _items_context_menu(self, pos) -> None:
+        """Right-click any items table cell → 'Use as [field]' menu."""
+        if not self.result or not self._row_meta:
+            return
+        global_pos = self._items_table.viewport().mapToGlobal(pos)
+        table_row = self._items_table.rowAt(pos.y())
+        if table_row < 0:
+            return
+        col = self._items_table.columnAt(pos.x())
+        cell = self._items_table.item(table_row, col)
+        cell_value = cell.text().strip() if cell else ""
+
+        # Get the full item dict for this row so we can offer multiple values
+        item = None
+        id_cell = self._items_table.item(table_row, 0)
+        if id_cell:
+            item = id_cell.data(Qt.UserRole)
+
+        menu = QMenu(self)
+
+        # Show which value will be used
+        if cell_value:
+            header_action = menu.addAction(f'Use  "{cell_value}"  as…')
+            header_action.setEnabled(False)
+            menu.addSeparator()
+
+        # Build one action per header validation field
+        if self._find_key:
+            # Find mode active — first option fills the current Find field
+            fv_find = self.result.report.fields.get(self._find_key)
+            if fv_find and cell_value:
+                active_act = menu.addAction(f'→ {fv_find.display_name}  (active Find field) ✓')
+                active_act.setFont(QFont("", -1, QFont.Bold))
+                active_act.triggered.connect(
+                    lambda _c=False, v=cell_value, le=self._find_le: (
+                        self._on_field_value_selected(v, "") if self._find_le else None
+                    )
+                )
+            menu.addSeparator()
+
+        if cell_value:
+            for r, meta in self._row_meta.items():
+                fv = self.result.report.fields.get(meta["field_key"])
+                if fv:
+                    act = menu.addAction(f'→ {fv.display_name}')
+                    act.triggered.connect(
+                        lambda _c=False, le=meta["resolved"], fk=meta["field_key"], v=cell_value:
+                        self._fill_field_from_items(le, fk, v)
+                    )
+
+        # If clicking empty cell but we have item data, offer key fields from the row
+        if not cell_value and item:
+            menu.addSeparator()
+            offers = [
+                ("Full Description", item.get("full_name", "")),
+                ("SKU", item.get("sku", "")),
+                ("Color", item.get("color", "")),
+                ("Order #", item.get("order_num", "")),
+                ("Account #", item.get("account", "")),
+                ("Qty", item.get("qty", "")),
+                ("Price/SYD", item.get("price", "")),
+            ]
+            for label_txt, val in offers:
+                if val:
+                    sub = menu.addMenu(f'{label_txt}: "{val}"')
+                    for r, meta in self._row_meta.items():
+                        fv = self.result.report.fields.get(meta["field_key"])
+                        if fv:
+                            act = sub.addAction(f'→ {fv.display_name}')
+                            act.triggered.connect(
+                                lambda _c=False, le=meta["resolved"], fk=meta["field_key"], v=val:
+                                self._fill_field_from_items(le, fk, v)
+                            )
+
+        if not menu.isEmpty():
+            menu.exec(global_pos)
+
+    def _fill_field_from_items(self, line_edit: QLineEdit, field_key: str, value: str) -> None:
+        """Fill a validation table field with a value chosen from the items table."""
+        line_edit.setText(value)
+        fv = self.result.report.fields.get(field_key) if self.result else None
+        if fv:
+            fv.resolved_value = value
+            fv.status = STATUS_OK
+        self._refresh_status_pills()
+        self._update_summary()
 
     def _export_items_csv(self) -> None:
         if not self._line_items:
@@ -1207,7 +1349,6 @@ class ProcessPage(QWidget):
                 self._line_items,
                 task_name=self.task_combo.currentText(),
             )
-            import os.path
             QMessageBox.information(
                 self,
                 "Items CSV exported",
@@ -1216,6 +1357,7 @@ class ProcessPage(QWidget):
             )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Export failed", str(exc))
+
 
     def _on_resolved_changed(self, table_row: int) -> None:
         """Live status update when user edits the resolved value field."""
@@ -1277,6 +1419,10 @@ class ProcessPage(QWidget):
 
         self.doc_viewer.start_find_mode(field_name, current_value=line_edit.text().strip())
 
+        # Refresh items hint to "click a cell to fill this field"
+        if hasattr(self, "_items_hint"):
+            self._update_items_hint()
+
     def _on_field_value_selected(self, selected_text: str, context_before: str) -> None:
         """Called when user clicks 'Use selection' in the doc viewer banner."""
         if not self._find_key or self._find_le is None:
@@ -1296,10 +1442,12 @@ class ProcessPage(QWidget):
         self._refresh_status_pills()
         self._update_summary()
 
-        # Exit find mode
+        # Reset find state and restore items hint to normal
         self.doc_viewer.exit_find_mode()
         self._find_key = None
         self._find_le = None
+        if hasattr(self, "_items_hint"):
+            self._update_items_hint()
 
         # Ask if they want to save an anchor
         detected_anchor = _auto_detect_anchor(selected_text, context_before)

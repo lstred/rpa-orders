@@ -1,22 +1,22 @@
 """Line item extractor for repeating-block documents.
 
-Automatically detects and parses the repeating order-item pattern found in
-carpet/rug order PDFs (and similar trade documents):
+Strategy (in priority order):
+  1. pdfplumber table data (``doc.tables``) — preferred; much more reliable
+     than text parsing for PDFs with embedded table structure.
+  2. Text parsing — fallback for scanned/image PDFs or when tables are absent.
 
+Expected document structure (carpet/rug trade orders):
     QT26-27-000324                              ← order / quote number
-    1 POSH BIO-45 - 1 1896 Na 3.66 SYD 200.0437 808178   ← item header
-    CARAMEL ae                                  ← color / style name
-    26260347/03A 3.66 45.70 SYD 200.0437 808178 ← roll detail line(s)
-    2 POSH BIO-45 - 1 1573. NA 3.66 SYD 196.9796 808178
-    ...
+    2   POSH BIO-60 -   5   2345   NA   4.60   SYD   661.8369   808178
+    GINGERBREAD                                 ← color / style name
+        22260427/03   4.60  24.00  SYD  132.0373  808178      ← roll detail
+        22260427/03A  4.60  24.20  SYD  133.1376  808178
 
-Returns a list of dicts, one per item:
-    {
-        order_num, item_num, sku, color,
-        qty, price, unit, extended_price, account,
-        roll_count, total_yards,
-        rolls: [{roll_id, price, yards, extended, account}]
-    }
+Each item in the returned list:
+    order_num, item_num, sku, color, full_name (sku+color combined),
+    qty, price, unit, extended_price, account,
+    roll_count, total_yards, source ("table"|"text"),
+    rolls: [{roll_id, price, yards, extended, account}]
 """
 from __future__ import annotations
 
@@ -24,26 +24,201 @@ import re
 from typing import Any
 
 
-# ── Pattern helpers ────────────────────────────────────────────────────────
+# ── Constants ──────────────────────────────────────────────────────────────
 
-_ORDER_RE = re.compile(r'^(QT[\w-]+)$', re.IGNORECASE)
+_ORDER_RE = re.compile(r'^(QT[\w\-]+)$', re.IGNORECASE)
+_ROLL_ID_RE = re.compile(r'^\d{5,}\/\w+$')     # e.g. 22260427/03A
+_COLOR_TRAILING = re.compile(r'\s+\b\w{1,2}\b\s*$')  # strip OCR artefacts
 
-_EM_DASHES = {"—", "–", "-"}
-
-# Colour cleanup: strip trailing 1-2 char OCR artefacts like "ae", "as", "Sa"
-_COLOR_TRAILING = re.compile(r'\s+\b\w{1,2}\b\s*$')
+# SKU must contain 2+ consecutive uppercase letters (POSH, BIO, etc.)
+_PRODUCT_CODE_RE = re.compile(r'[A-Z]{2,}')
 
 
 # ── Public API ─────────────────────────────────────────────────────────────
 
-def extract_line_items(text: str) -> list[dict[str, Any]]:
-    """Parse repeating item blocks from document text.
+def extract_line_items(
+    text: str,
+    tables: list[list[list[str]]] | None = None,
+) -> list[dict[str, Any]]:
+    """Parse repeating item blocks from a document.
 
-    Tolerant of minor OCR noise: European decimal commas, stray em-dashes,
-    trailing artefact chars on colour names, and blank lines between blocks.
-
+    Tries pdfplumber table data first (most reliable), falls back to text.
     Returns an empty list when no recognisable item pattern is found.
     """
+    if tables:
+        items = _from_tables(tables)
+        if items:
+            return items
+    return _from_text(text)
+
+
+def items_detected(text: str, tables: list | None = None) -> bool:
+    """Quick check — True if the document contains at least one parseable item."""
+    return bool(extract_line_items(text, tables))
+
+
+# ── Table-based extraction (primary) ───────────────────────────────────────
+
+def _from_tables(tables: list) -> list[dict]:
+    all_items: list[dict] = []
+    for table in tables:
+        items = _parse_one_table(table)
+        all_items.extend(items)
+    # Post-process
+    for it in all_items:
+        it["full_name"] = (it["sku"] + " " + it.get("color", "")).strip()
+        it["total_yards"] = _sum_yards(it.get("rolls", []))
+        it["roll_count"] = len(it.get("rolls", []))
+    return all_items
+
+
+def _parse_one_table(table: list) -> list[dict]:
+    """Heuristic table parser — flexible about column positions."""
+    if not table or len(table) < 2:
+        return []
+
+    # Normalise to strings
+    rows = [[c.strip() if c else "" for c in row] for row in table]
+
+    # Find which column most commonly holds "SYD" — this anchors everything else
+    syd_col = _find_syd_col(rows)
+    if syd_col is None:
+        return []  # This table doesn't look like an order table
+
+    items: list[dict] = []
+    pending: dict | None = None
+    current_order = ""
+
+    for row in rows:
+        if not any(row):
+            continue
+
+        # Detect order numbers anywhere in the row
+        for cell in row:
+            if _ORDER_RE.match(cell):
+                current_order = cell
+                break
+
+        cell0 = row[0]
+        cell1 = row[1] if len(row) > 1 else ""
+
+        # ── Item header row: first cell is a small positive integer ──
+        if cell0.isdigit() and 1 <= int(cell0) <= 999:
+            if pending:
+                items.append(pending)
+            pending = _parse_item_row(row, syd_col, current_order)
+            continue
+
+        # ── Color/style row: first cell empty, second cell is plain text ──
+        if (
+            not cell0
+            and cell1
+            and "/" not in cell1
+            and not cell1[0].isdigit()
+            and re.match(r'[A-Za-z]', cell1)
+            and pending is not None
+            and not pending.get("color")
+        ):
+            pending["color"] = _clean_color(cell1)
+            continue
+
+        # ── Roll detail row: contains a roll ID (digits/letters with /) ──
+        if pending is not None:
+            roll = _parse_roll_row(row, syd_col)
+            if roll:
+                pending.setdefault("rolls", []).append(roll)
+
+    if pending:
+        items.append(pending)
+    return items
+
+
+def _find_syd_col(rows: list) -> int | None:
+    """Column most frequently containing 'SYD' (case-insensitive)."""
+    counts: dict[int, int] = {}
+    for row in rows:
+        for i, cell in enumerate(row):
+            if cell.upper() == "SYD":
+                counts[i] = counts.get(i, 0) + 1
+    return max(counts, key=counts.get) if counts else None
+
+
+def _parse_item_row(row: list, syd_col: int, order_num: str) -> dict:
+    n = len(row)
+    # Price: last numeric cell to the LEFT of syd_col
+    price = ""
+    for i in range(syd_col - 1, 0, -1):
+        val = row[i].replace(",", ".")
+        if _is_numeric_str(val):
+            price = val
+            break
+    # Extended + account: first two non-empty cells to the RIGHT of syd_col
+    after = [c for c in row[syd_col + 1:] if c.strip()]
+    extended = after[0] if after else ""
+    account = after[-1] if len(after) > 1 else after[0] if after else ""
+    return {
+        "order_num": order_num,
+        "item_num": row[0],
+        "sku": row[1].rstrip(" -").strip() if n > 1 else "",
+        "qty": row[2] if n > 2 else "",
+        "style_code": row[3] if n > 3 else "",
+        "price": price,
+        "unit": "SYD",
+        "extended_price": extended,
+        "account": account,
+        "color": "",
+        "rolls": [],
+        "source": "table",
+    }
+
+
+def _parse_roll_row(row: list, syd_col: int) -> dict | None:
+    """Parse a roll detail row identified by a roll ID cell."""
+    roll_id = ""
+    for cell in row:
+        if re.match(r'^\d{5,}/', cell):
+            roll_id = cell
+            break
+    if not roll_id:
+        return None
+
+    # Yards: last numeric cell to the LEFT of syd_col
+    yards = ""
+    if syd_col > 0:
+        yards = row[syd_col - 1].replace(",", ".")
+    if not _is_numeric_str(yards):
+        yards = ""
+
+    # Price: numeric cell left of yards
+    price = ""
+    for i in range(syd_col - 2, 0, -1):
+        val = row[i].replace(",", ".")
+        if _is_numeric_str(val):
+            price = val
+            break
+
+    after = [c for c in row[syd_col + 1:] if c.strip()]
+    extended = after[0] if after else ""
+    account = after[-1] if len(after) > 1 else after[0] if after else ""
+
+    try:
+        float(yards)
+    except (ValueError, TypeError):
+        return None  # Not a real roll row
+
+    return {
+        "roll_id": roll_id,
+        "price": price,
+        "yards": yards,
+        "extended": extended,
+        "account": account,
+    }
+
+
+# ── Text-based extraction (fallback) ───────────────────────────────────────
+
+def _from_text(text: str) -> list[dict]:
+    """Parse repeating blocks from plain text (e.g. PyMuPDF output or OCR)."""
     if not text:
         return []
 
@@ -58,48 +233,45 @@ def extract_line_items(text: str) -> list[dict[str, Any]]:
             i += 1
             continue
 
-        # Order / quote number (e.g. QT26-27-000324)
-        if _is_order_line(line):
+        if _ORDER_RE.match(line):
             current_order = line
             i += 1
             continue
 
-        # Item header line
-        item_data = _parse_item_line(line)
+        item_data = _parse_text_item_line(line)
         if item_data is not None:
             item_data["order_num"] = current_order
-
-            # Advance past the item line; skip any blanks
             j = i + 1
+
+            # Skip blanks
             while j < len(lines) and not lines[j]:
                 j += 1
 
-            # Next non-empty line that looks like a colour name
+            # Color on next line
             if j < len(lines) and _is_color_line(lines[j]):
                 item_data["color"] = _clean_color(lines[j])
                 j += 1
-                # Skip blanks before roll lines
                 while j < len(lines) and not lines[j]:
                     j += 1
-            else:
-                item_data["color"] = ""
 
-            # Collect roll detail lines
+            # Roll detail lines
             rolls: list[dict] = []
             while j < len(lines):
                 if not lines[j]:
                     j += 1
                     continue
-                roll = _parse_roll_line(lines[j])
+                roll = _parse_text_roll_line(lines[j])
                 if roll is not None:
                     rolls.append(roll)
                     j += 1
                 else:
-                    break  # Next item or non-roll line
+                    break
 
             item_data["rolls"] = rolls
             item_data["roll_count"] = len(rolls)
             item_data["total_yards"] = _sum_yards(rolls)
+            item_data["full_name"] = (item_data["sku"] + " " + item_data.get("color", "")).strip()
+            item_data["source"] = "text"
             items.append(item_data)
             i = j
             continue
@@ -109,46 +281,15 @@ def extract_line_items(text: str) -> list[dict[str, Any]]:
     return items
 
 
-def items_detected(text: str) -> bool:
-    """Quick check — True if the text contains at least one parseable item block."""
-    if not text:
-        return False
-    for line in text.splitlines():
-        if _parse_item_line(line.strip()) is not None:
-            return True
-    return False
-
-
-# ── Line classifiers ───────────────────────────────────────────────────────
-
-def _is_order_line(line: str) -> bool:
-    """Quote/order number on its own line, e.g. QT26-27-000324."""
-    return bool(_ORDER_RE.match(line))
-
-
-def _is_color_line(line: str) -> bool:
-    """Color/style names start with a letter and have no leading digits or slashes."""
-    if not line or not line[0].isalpha():
-        return False
-    if "/" in line[:10]:          # Roll IDs contain a slash early
-        return False
-    if _is_order_line(line):      # Don't misclassify order numbers
-        return False
-    return True
-
-
-# ── Line parsers ───────────────────────────────────────────────────────────
-
-def _parse_item_line(line: str) -> dict[str, Any] | None:
+def _parse_text_item_line(line: str) -> dict | None:
     """
-    Parse an item header of the form:
-        N [— ] SKU - qty code flag price SYD extended account
+    Parse a text item line:  N [—] SKU - qty [style] [flag] price SYD extended account
 
-    Example:
+    Examples:
         1 POSH BIO-45 - 1 1896 Na 3.66 SYD 200.0437 808178
         8 — POSH BIO-30 - 4 1045 NA 4.60 SYD 863.7440 808488
+        2 POSH BIO-60 - 5 2345 NA 4.60 SYD 661.8369 808178
     """
-    # Must start with a digit and contain SYD
     if not line or not line[0].isdigit():
         return None
     upper = line.upper()
@@ -157,50 +298,42 @@ def _parse_item_line(line: str) -> dict[str, Any] | None:
 
     syd_pos = upper.index("SYD")
     before = line[:syd_pos].strip()
-    after  = line[syd_pos + 3:].strip()
+    after = line[syd_pos + 3:].strip()
 
-    # After SYD: "extended account [extra...]"
     after_tok = after.split()
     if len(after_tok) < 2:
         return None
     extended = after_tok[0]
-    account  = after_tok[1]
+    account = after_tok[1]
 
-    # Before SYD: "N [—] SKU - qty code flag price"
     before_tok = before.split()
     if len(before_tok) < 5:
         return None
 
-    # Last token = price per unit
-    price_raw = before_tok[-1]
-    price = price_raw.replace(",", ".")
+    # Last token = price/SYD
+    price_raw = before_tok[-1].replace(",", ".")
     try:
-        float(price)
+        float(price_raw)
     except ValueError:
         return None
 
-    # Second-to-last token = NA/Na/etc flag — remove it
-    # (It's always non-numeric, e.g. "Na", "NA", "sYD" typo)
-    remaining_tok = before_tok[:-2]          # drop price + flag
-    # "1 POSH BIO-45 - 1 1896"
+    # Second-to-last = NA/flag — drop both
+    remaining_tok = before_tok[:-2]
 
-    # The last remaining token might be a style code (all digits)
-    # Remove it so we don't confuse it with qty
-    if remaining_tok and _is_numeric(remaining_tok[-1]):
-        # Only remove if there's still a " - " separator left after removal
+    # If last remaining token is numeric (style code), remove it — but only if
+    # there's still a " - " separator after removal
+    if remaining_tok and _is_numeric_str(remaining_tok[-1]):
         candidate = remaining_tok[:-1]
         if " - " in " ".join(candidate):
             remaining_tok = candidate
 
     remaining = " ".join(remaining_tok)
-
-    # Split on LAST " - " to separate "N SKU" from "qty"
     dash_idx = remaining.rfind(" - ")
     if dash_idx < 0:
         return None
 
-    left  = remaining[:dash_idx].strip()   # "1 POSH BIO-45"
-    right = remaining[dash_idx + 3:].strip()  # "1" or "1 1896"
+    left = remaining[:dash_idx].strip()   # e.g. "1 POSH BIO-45"
+    right = remaining[dash_idx + 3:].strip()  # e.g. "1"
 
     left_tok = left.split()
     if not left_tok:
@@ -211,10 +344,14 @@ def _parse_item_line(line: str) -> dict[str, Any] | None:
         return None
 
     sku_tok = left_tok[1:]
-    # Strip optional leading em-dash artefact
-    if sku_tok and sku_tok[0] in _EM_DASHES:
+    # Strip optional em-dash artefact after item number
+    if sku_tok and sku_tok[0] in ("—", "–", "-"):
         sku_tok = sku_tok[1:]
     sku = " ".join(sku_tok).strip()
+
+    # Reject if SKU doesn't look like a real product code
+    if not _looks_like_product_sku(sku):
+        return None
 
     right_tok = right.split()
     qty = right_tok[0] if right_tok else ""
@@ -223,24 +360,21 @@ def _parse_item_line(line: str) -> dict[str, Any] | None:
         "item_num": item_num,
         "sku": sku,
         "qty": qty,
-        "price": price,
+        "price": price_raw,
         "unit": "SYD",
         "extended_price": extended,
         "account": account,
+        "color": "",
     }
 
 
-def _parse_roll_line(line: str) -> dict[str, Any] | None:
-    """
-    Parse a roll detail line of the form:
-        roll_id price yards SYD extended account
-
-    Example:
-        26260347/03A 3.66 45.70 SYD 200.0437 808178
-        22260415/02B 4.60 38,00 SYD 209.0591 808178
-    """
+def _parse_text_roll_line(line: str) -> dict | None:
+    """Parse a roll detail line:  roll_id  price  yards  SYD  extended  account"""
     tokens = line.split()
     if not tokens or "/" not in tokens[0]:
+        return None
+    # Roll ID must look like: digits/alphanumeric
+    if not re.match(r'^\d{5,}/', tokens[0]):
         return None
     upper_tokens = [t.upper() for t in tokens]
     if "SYD" not in upper_tokens:
@@ -255,29 +389,44 @@ def _parse_roll_line(line: str) -> dict[str, Any] | None:
     extended = tokens[syd_idx + 1] if syd_idx + 1 < len(tokens) else ""
     account  = tokens[syd_idx + 2] if syd_idx + 2 < len(tokens) else ""
 
-    # Quick sanity: yards should be numeric-ish
     try:
         float(yards)
     except ValueError:
         return None
 
-    return {
-        "roll_id": roll_id,
-        "price": price,
-        "yards": yards,
-        "extended": extended,
-        "account": account,
-    }
+    return {"roll_id": roll_id, "price": price, "yards": yards,
+            "extended": extended, "account": account}
 
 
-# ── Utilities ──────────────────────────────────────────────────────────────
+# ── Classifiers & utilities ────────────────────────────────────────────────
+
+def _is_color_line(line: str) -> bool:
+    """Color/style names: start with a letter, no slash, not an order number."""
+    if not line or not line[0].isalpha():
+        return False
+    if "/" in line[:15]:
+        return False
+    if _ORDER_RE.match(line):
+        return False
+    return True
+
+
+def _looks_like_product_sku(sku: str) -> bool:
+    """Reject lines where the 'SKU' looks like prose (page refs, totals, etc.)."""
+    if not sku or len(sku) < 3:
+        return False
+    # Must contain 2+ consecutive uppercase letters (product codes are capitalised)
+    return bool(_PRODUCT_CODE_RE.search(sku))
+
 
 def _clean_color(line: str) -> str:
     """Remove trailing 1-2 char OCR artefacts: 'CARAMEL ae' → 'CARAMEL'."""
     return _COLOR_TRAILING.sub("", line).strip()
 
 
-def _is_numeric(s: str) -> bool:
+def _is_numeric_str(s: str) -> bool:
+    if not s:
+        return False
     try:
         float(s.replace(",", ".").rstrip("."))
         return True
@@ -285,8 +434,7 @@ def _is_numeric(s: str) -> bool:
         return False
 
 
-def _sum_yards(rolls: list[dict]) -> str:
-    """Sum yards across all rolls in a group."""
+def _sum_yards(rolls: list) -> str:
     try:
         total = sum(float(r["yards"]) for r in rolls if r.get("yards"))
         return f"{total:.2f}"
