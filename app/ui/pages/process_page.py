@@ -56,6 +56,7 @@ from app.core.local_store import LocalStore
 from app.export import exporter
 from app.extraction.ai_extractor import ai_enabled
 from app.extraction.field_extractor import extract_fields
+from app.extraction.line_items_extractor import extract_line_items
 from app.extraction.template_matcher import best_template
 from app.ingestion.document_loader import load_document
 from app.ui.widgets import hline, label, page_header, row, status_pill
@@ -451,6 +452,7 @@ class ProcessPage(QWidget):
         self._find_key: str | None = None
         self._find_le: QLineEdit | None = None
         self._last_export_json: str | None = None
+        self._line_items: list = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 24)
@@ -464,6 +466,7 @@ class ProcessPage(QWidget):
         outer.addWidget(self._controls_card())
         outer.addWidget(self._steps_bar_card())
         outer.addWidget(self._main_splitter(), 1)
+        outer.addWidget(self._line_items_card())
 
         self.refresh_tasks()
         self._set_step("idle")
@@ -880,6 +883,8 @@ class ProcessPage(QWidget):
         self.progress.setVisible(True)
         self._empty_state.hide()
         self._results_wrap.hide()
+        self._items_card.hide()
+        self._line_items = []
         self.doc_viewer.exit_find_mode()
         self._set_step("loading", "Loading document…")
 
@@ -976,6 +981,10 @@ class ProcessPage(QWidget):
         for b in (self.save_tpl_btn, self.learn_btn, self.export_btn):
             b.setEnabled(True)
         self._update_summary()
+
+        # Auto-detect repeating line items
+        self._line_items = extract_line_items(result.loaded_doc.full_text)
+        self._populate_line_items(self._line_items)
 
     # ──────────────────────────────────────────────────────────────
     # Results table
@@ -1097,6 +1106,116 @@ class ProcessPage(QWidget):
                         item.setBackground(QColor("#250c0c"))
 
         self.table.resizeRowsToContents()
+
+    # ──────────────────────────────────────────────────────────────
+    # Line items auto-detection
+    # ──────────────────────────────────────────────────────────────
+
+    def _line_items_card(self) -> QWidget:
+        """Full-width card shown below the splitter when repeating items are detected."""
+        self._items_card = QFrame()
+        self._items_card.setObjectName("card")
+        v = QVBoxLayout(self._items_card)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(8)
+
+        # Header row
+        hdr = QHBoxLayout()
+        self._items_title = QLabel("Line Items")
+        self._items_title.setObjectName("cardTitle")
+        self._export_items_btn = QPushButton("📤  Export items CSV")
+        self._export_items_btn.setFixedHeight(30)
+        self._export_items_btn.setEnabled(False)
+        self._export_items_btn.setToolTip(
+            "Write a CSV with one row per line item.\n"
+            "Power Automate can loop over this file to key each item into the ERP.\n"
+            "The same items are also embedded in the main JSON export."
+        )
+        self._export_items_btn.clicked.connect(self._export_items_csv)
+        hdr.addWidget(self._items_title)
+        hdr.addStretch(1)
+        hdr.addWidget(self._export_items_btn)
+        v.addLayout(hdr)
+
+        # Hint bar
+        hint = QLabel(
+            "💡  These line items were <b>auto-detected</b> from the repeating pattern in the "
+            "document — no setup needed. "
+            "Click  <b>📤 Export items CSV</b>  to get a one-row-per-item file Power Automate "
+            "can loop over. Items are also included in the main  📤 Export for RPA  JSON."
+        )
+        hint.setWordWrap(True)
+        hint.setTextFormat(Qt.RichText)
+        hint.setStyleSheet(
+            "background:#141e2b; border-left:3px solid #2f81f7; "
+            "padding:8px 12px; border-radius:6px; color:#c9d1d9; font-size:12px;"
+        )
+        v.addWidget(hint)
+
+        # Items table
+        _COLS = ["Order #", "Item #", "SKU", "Color / Style", "Qty (rolls)",
+                 "Price / SYD", "Extended ($)", "Account #"]
+        self._items_table = QTableWidget(0, len(_COLS))
+        self._items_table.setHorizontalHeaderLabels(_COLS)
+        self._items_table.verticalHeader().setVisible(False)
+        self._items_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._items_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._items_table.setMaximumHeight(230)
+        ihdr = self._items_table.horizontalHeader()
+        ihdr.setSectionResizeMode(QHeaderView.ResizeToContents)
+        ihdr.setSectionResizeMode(3, QHeaderView.Stretch)   # Color stretches
+        v.addWidget(self._items_table)
+
+        self._items_card.hide()
+        return self._items_card
+
+    def _populate_line_items(self, items: list) -> None:
+        self._items_table.setRowCount(0)
+        for item in items:
+            r = self._items_table.rowCount()
+            self._items_table.insertRow(r)
+            values = [
+                item.get("order_num", ""),
+                item.get("item_num", ""),
+                item.get("sku", ""),
+                item.get("color", ""),
+                item.get("qty", ""),
+                item.get("price", ""),
+                item.get("extended_price", ""),
+                item.get("account", ""),
+            ]
+            for col, val in enumerate(values):
+                cell = QTableWidgetItem(str(val))
+                cell.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                self._items_table.setItem(r, col, cell)
+
+        n = len(items)
+        if n:
+            self._items_title.setText(
+                f"Line Items — {n} item{'s' if n != 1 else ''} auto-detected"
+            )
+            self._export_items_btn.setEnabled(True)
+            self._items_card.show()
+        else:
+            self._items_card.hide()
+
+    def _export_items_csv(self) -> None:
+        if not self._line_items:
+            return
+        try:
+            path = exporter.export_line_items_csv(
+                self._line_items,
+                task_name=self.task_combo.currentText(),
+            )
+            import os.path
+            QMessageBox.information(
+                self,
+                "Items CSV exported",
+                f"Saved:\n  {os.path.basename(path)}\n\nIn:\n  {_paths.EXPORTS_DIR}\n\n"
+                "Each row is one order line — ready for a Power Automate loop.",
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Export failed", str(exc))
 
     def _on_resolved_changed(self, table_row: int) -> None:
         """Live status update when user edits the resolved value field."""
@@ -1330,8 +1449,18 @@ class ProcessPage(QWidget):
             payload = exporter.build_payload(
                 task_name, self.result.loaded_doc.file_name, report
             )
+            # Embed line items in JSON if present
+            if self._line_items:
+                payload["line_items"] = [
+                    {k: v for k, v in it.items() if k != "rolls"}
+                    for it in self._line_items
+                ]
             json_path = exporter.export_json(payload)
             csv_path = exporter.export_csv(payload)
+            items_csv_path = (
+                exporter.export_line_items_csv(self._line_items, task_name=task_name)
+                if self._line_items else None
+            )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
                 self,
@@ -1361,12 +1490,17 @@ class ProcessPage(QWidget):
         self.status_label.setStyleSheet("color:#3fb950; font-weight:600;")
         import os.path
         fname = os.path.basename(json_path)
+        items_line = (
+            f"  {os.path.basename(items_csv_path)}  ← one row per line item\n"
+            if items_csv_path else ""
+        )
         QMessageBox.information(
             self,
             "Exported successfully",
             f"Files written for Power Automate:\n\n"
             f"  {fname}\n"
-            f"  {os.path.basename(csv_path)}\n\n"
+            f"  {os.path.basename(csv_path)}\n"
+            f"{items_line}\n"
             f"Saved in:\n  {_paths.EXPORTS_DIR}\n\n"
             "Click  📂 Open exports folder  to see the files in Explorer.\n"
             "Click  👁 View in Exports  to preview the contents inside this app.",

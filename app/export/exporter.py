@@ -95,5 +95,35 @@ def export_csv(payload: dict[str, Any], out_path: str | None = None) -> str:
     return out_path
 
 
+def export_line_items_csv(
+    items: list[dict],
+    out_path: str | None = None,
+    task_name: str = "task",
+) -> str:
+    """Write one CSV row per detected line item — for Power Automate looping.
+
+    Columns: order_num, item_num, sku, color, qty, price, unit,
+             extended_price, account, total_yards, roll_count
+    """
+    paths.ensure_dirs()
+    if out_path is None:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_task = _slug(task_name)
+        out_path = str(paths.EXPORTS_DIR / f"{safe_task}_{stamp}_items.csv")
+
+    headers = [
+        "order_num", "item_num", "sku", "color",
+        "qty", "price", "unit", "extended_price", "account",
+        "total_yards", "roll_count",
+    ]
+    with Path(out_path).open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.DictWriter(fh, fieldnames=headers, extrasaction="ignore")
+        writer.writeheader()
+        for item in items:
+            writer.writerow({k: item.get(k, "") for k in headers})
+    log.info("Exported items CSV -> %s", out_path)
+    return out_path
+
+
 def _slug(text: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in (text or "task")).strip("_")[:60]
