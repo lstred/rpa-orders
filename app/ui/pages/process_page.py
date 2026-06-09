@@ -774,7 +774,7 @@ class ProcessPage(QWidget):
     def _update_ai_badge(self) -> None:
         if ai_enabled():
             provider = Config.get("ai.provider", "anthropic")
-            model = Config.get("ai.model", "claude-sonnet-4-20250514")
+            model = Config.get("ai.model", "claude-sonnet-4-5-20250929")
             short = model.split("-")[0].capitalize() if model else provider.capitalize()
             self._ai_badge.setText(f"🤖  AI: {provider.capitalize()} {short} ✓")
             self._ai_badge.setStyleSheet(

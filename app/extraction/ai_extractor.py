@@ -127,7 +127,7 @@ def _call_anthropic(prompt: str, model: str) -> str:
         raise RuntimeError("Anthropic API key not set (Settings page).")
     client = anthropic.Anthropic(api_key=key)
     resp = client.messages.create(
-        model=model or "claude-sonnet-4-20250514",
+        model=model or "claude-sonnet-4-5-20250929",
         max_tokens=int(Config.get("ai.max_output_tokens", 4096)),
         temperature=float(Config.get("ai.temperature", 0.0)),
         messages=[{"role": "user", "content": prompt}],
@@ -337,7 +337,7 @@ def _call_anthropic_chat(messages: list[dict], model: str, system_msg: str) -> s
         raise RuntimeError("Anthropic API key not set (Settings page).")
     client = anthropic.Anthropic(api_key=key)
     resp = client.messages.create(
-        model=model or "claude-sonnet-4-20250514",
+        model=model or "claude-sonnet-4-5-20250929",
         max_tokens=int(Config.get("ai.max_output_tokens", 4096)),
         temperature=float(Config.get("ai.temperature", 0.0)),
         system=system_msg,

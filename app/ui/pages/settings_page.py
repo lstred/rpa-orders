@@ -31,22 +31,19 @@ MODEL_GUIDANCE = """
 <p><b>AI is optional</b> and only fills fields with no saved mapping. Costs below are
 approximate per 1M tokens and change often — verify with the provider.</p>
 <ul>
-<li><b>Claude Sonnet 4</b> <code>claude-sonnet-4</code> — <span class="g">recommended
-default</span>. Excellent at structured extraction &amp; document reasoning, vision
-capable. ~$3 in / $15 out. Great accuracy-to-cost balance.</li>
-<li><b>Claude Opus 4</b> — highest accuracy for messy/complex layouts. ~$15 in /
+<li><b>Claude Sonnet 4.5</b> <code>claude-sonnet-4-5-20250929</code> — <span class="g">recommended
+default</span>. Excellent at structured extraction &amp; document reasoning.
+~$3 in / $15 out. Great accuracy-to-cost balance.</li>
+<li><b>Claude Opus 4.5</b> <code>claude-opus-4-5-20251101</code> — highest accuracy for messy/complex layouts. ~$15 in /
 $75 out. Use when Sonnet struggles.</li>
-<li><b>Claude Haiku</b> — cheapest Claude, fast, good for clean/simple docs.
-Lower accuracy on noisy scans.</li>
+<li><b>Claude Haiku 4.5</b> <code>claude-haiku-4-5-20251001</code> — cheapest Claude, fast, good for clean/simple docs.</li>
 <li><b>OpenAI GPT-4o</b> <code>gpt-4o</code> — strong, vision capable, broad
 ecosystem. ~$2.50 in / $10 out. Comparable to Sonnet.</li>
-<li><b>OpenAI GPT-4o-mini</b> — very cheap (~$0.15 in / $0.60 out), fine for
-simple structured docs; weaker on ambiguous layouts.</li>
+<li><b>OpenAI GPT-4o-mini</b> <code>gpt-4o-mini</code> — very cheap (~$0.15 in / $0.60 out), fine for
+simple structured docs.</li>
 </ul>
-<p><b>Pros of AI:</b> handles brand-new layouts with no setup; understands synonyms
-&amp; abbreviations. <b>Cons:</b> per-call cost, network dependency, occasional
-hallucination — which is exactly why every AI value still passes through warehouse
-validation and your confirmation before export.</p>
+<p><b>Important:</b> Enter the exact model ID shown in <code>code</code> above — spelling
+must match exactly or you will get a 404 error from the API.</p>
 <p><b>Privacy:</b> enabling AI sends document text to the chosen provider. For
 sensitive documents prefer deterministic templates, or keep AI disabled.</p>
 """
@@ -147,7 +144,7 @@ class SettingsPage(QWidget):
         self.provider.addItems(["anthropic", "openai"])
         self.provider.setCurrentText(Config.get("ai.provider", "anthropic"))
 
-        self.model = QLineEdit(Config.get("ai.model", "claude-sonnet-4-20250514"))
+        self.model = QLineEdit(Config.get("ai.model", "claude-sonnet-4-5-20250929"))
 
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.Password)

@@ -14,7 +14,7 @@
   "ai": {
     "enabled": false,
     "provider": "anthropic",
-    "model": "claude-sonnet-4-20250514",
+    "model": "claude-sonnet-4-5-20250929",
     "_comment": "API key is NOT stored here. It lives in Windows Credential Manager via keyring. Set it on the Settings page.",
     "max_output_tokens": 4096,
     "temperature": 0.0
