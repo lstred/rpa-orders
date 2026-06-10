@@ -181,7 +181,7 @@ Rules:
   in the document (e.g., on an invoice page and again on a packing slip), include it
   ONLY ONCE.
 - Do NOT include totals, sub-totals, freight lines, or header rows.
-- item_num must be a small positive integer (1-999) as a string.
+- item_num must be a positive integer as a string; number items sequentially 1, 2, 3 …
 - roll_count and total_yards summarise the roll detail lines below each item header.
 - Use "" for any field you cannot find; never invent values.
 - Return ONLY the JSON array — no prose, no code fences."""
@@ -191,7 +191,7 @@ def analyze_line_items_with_ai(
     document_text: str,
     user_instruction: str = "",
     conversation: list[dict] | None = None,
-) -> tuple[list[dict], str]:
+) -> tuple[list[dict], str, str]:
     """Ask the configured AI to identify and structure line items in a document.
 
     Args:
@@ -200,8 +200,9 @@ def analyze_line_items_with_ai(
         conversation: Prior turns as [{role, content}] for multi-turn refinement.
 
     Returns:
-        (items, ai_reply_text) — items is an empty list on failure, ai_reply_text
-        is the raw text the AI returned (or an error message).
+        (items, ai_reply_text, user_content_sent) — items is empty on failure;
+        user_content_sent is the exact user message sent so callers can store it
+        in the conversation for correct multi-turn context.
     """
     if not ai_enabled():
         return [], "AI is not enabled. Go to Settings → enable AI and add an API key."
@@ -241,56 +242,151 @@ def analyze_line_items_with_ai(
         messages.extend(conversation)
     messages.append({"role": "user", "content": user_content})
 
+    # Line items can be large — use at least 8192 output tokens
+    line_items_max_tokens = max(8192, int(Config.get("ai.max_output_tokens", 4096)))
+
     try:
         if provider == "anthropic":
-            raw = _call_anthropic_chat(messages, model, system_msg)
+            raw = _call_anthropic_chat(messages, model, system_msg,
+                                       max_tokens=line_items_max_tokens)
         elif provider == "openai":
-            raw = _call_openai_chat(messages, model, system_msg)
+            raw = _call_openai_chat(messages, model, system_msg,
+                                    max_tokens=line_items_max_tokens)
         else:
-            return [], f"Unknown AI provider '{provider}'."
+            return [], f"Unknown AI provider '{provider}'.", user_content
     except Exception as exc:  # noqa: BLE001
         log.warning("analyze_line_items_with_ai failed: %s", exc)
-        return [], str(exc)
+        return [], str(exc), user_content
 
     items = _parse_items_json(raw)
-    return items, raw
+    return items, raw, user_content
 
 
 def _parse_items_json(raw: str) -> list[dict]:
     """Parse a JSON array of line items from AI output.
 
     Handles: plain JSON array, code-fenced JSON, prose-before-JSON,
-    objects with an 'items' key, and other common AI output variations.
+    objects with an 'items' key, truncated JSON, and other AI output variations.
+    Uses bracket-depth scanning so trailing text or notes after the JSON don't
+    confuse rfind-based approaches.
     """
     raw = (raw or "").strip()
 
-    # Strip ALL code fences no matter where they appear
-    raw = re.sub(r"```[a-z]*\n?", "", raw).replace("```", "").strip()
+    # Strip ALL code fences (case-insensitive language tag, any position)
+    raw = re.sub(r"```[a-zA-Z]*\n?", "", raw).replace("```", "").strip()
 
-    # Try finding a JSON array first
-    start, end = raw.find("["), raw.rfind("]")
-    if start != -1 and end != -1 and end > start:
-        try:
-            data = json.loads(raw[start : end + 1])
-            if isinstance(data, list):
-                return _normalise_items(data)
-        except json.JSONDecodeError:
-            pass  # fall through to object check
+    # Strategy 1: parse the whole cleaned string directly
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return _normalise_items(data)
+        if isinstance(data, dict):
+            for v in data.values():
+                if isinstance(v, list):
+                    r = _normalise_items(v)
+                    if r:
+                        return r
+    except json.JSONDecodeError:
+        pass
 
-    # Try finding a JSON object (AI may wrap array in {"items": [...]})
-    oc, oe = raw.find("{"), raw.rfind("}")
-    if oc != -1 and oe != -1 and oe > oc:
+    # Strategy 2: bracket-depth scan to find the first balanced [ ] or { }
+    # This is robust to trailing prose/notes after the JSON block.
+    for open_ch, close_ch in [("[", "]"), ("{", "}")]:
+        i = raw.find(open_ch)
+        if i == -1:
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        end_idx = -1
+        for j in range(i, len(raw)):
+            ch = raw[j]
+            if esc:
+                esc = False
+                continue
+            if ch == "\\" and in_str:
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch in "[{":
+                depth += 1
+            elif ch in "]}":
+                depth -= 1
+                if depth == 0:
+                    end_idx = j
+                    break
+        if end_idx != -1:
+            try:
+                data = json.loads(raw[i : end_idx + 1])
+                if isinstance(data, list):
+                    result = _normalise_items(data)
+                    if result:
+                        return result
+                elif isinstance(data, dict):
+                    for v in data.values():
+                        if isinstance(v, list):
+                            result = _normalise_items(v)
+                            if result:
+                                return result
+            except json.JSONDecodeError:
+                pass
+        else:
+            # JSON was cut off (max_tokens limit) — recover partial items
+            log.warning("_parse_items_json: JSON appears truncated; attempting partial recovery")
+            return _recover_partial_items(raw[i:])
+
+    log.warning("_parse_items_json: could not locate any JSON structure in AI response")
+    return []
+
+
+def _recover_partial_items(raw: str) -> list[dict]:
+    """Extract individual complete {…} item objects from truncated JSON."""
+    items: list[dict] = []
+    i = 0
+    while i < len(raw):
+        j = raw.find("{", i)
+        if j == -1:
+            break
+        depth = 0
+        in_str = False
+        esc = False
+        end_idx = -1
+        for k in range(j, len(raw)):
+            ch = raw[k]
+            if esc:
+                esc = False
+                continue
+            if ch == "\\" and in_str:
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end_idx = k
+                    break
+        if end_idx == -1:
+            break  # object is truncated — nothing more to recover
         try:
-            obj = json.loads(raw[oc : oe + 1])
-            if isinstance(obj, dict):
-                for v in obj.values():
-                    if isinstance(v, list):
-                        result = _normalise_items(v)
-                        if result:
-                            return result
+            obj = json.loads(raw[j : end_idx + 1])
+            if isinstance(obj, dict) and (obj.get("sku") or obj.get("item_num") or obj.get("order_num")):
+                items.append(obj)
         except json.JSONDecodeError:
             pass
-
+        i = end_idx + 1
+    if items:
+        log.info("_recover_partial_items: recovered %d item(s) from truncated JSON", len(items))
+        return _normalise_items(items)
     return []
 
 
@@ -305,9 +401,9 @@ def _normalise_items(raw_list: list) -> list[dict]:
         try:
             num = int(float(str(raw_num).strip().rstrip(".")))
         except (ValueError, TypeError):
-            continue
-        if num < 1 or num > 999:
-            continue
+            num = 0
+        if num < 1:
+            num = len(result) + 1  # assign sequential number if missing/invalid
         item_num = str(num)
         sku = str(item.get("sku", "")).strip()
         color = str(item.get("color", "")).strip()
@@ -330,15 +426,19 @@ def _normalise_items(raw_list: list) -> list[dict]:
     return result
 
 
-def _call_anthropic_chat(messages: list[dict], model: str, system_msg: str) -> str:
+def _call_anthropic_chat(
+    messages: list[dict], model: str, system_msg: str,
+    max_tokens: int | None = None,
+) -> str:
     import anthropic
     key = get_secret(ANTHROPIC_KEY)
     if not key:
         raise RuntimeError("Anthropic API key not set (Settings page).")
     client = anthropic.Anthropic(api_key=key)
+    actual_max = max_tokens if max_tokens is not None else int(Config.get("ai.max_output_tokens", 4096))
     resp = client.messages.create(
         model=model or "claude-sonnet-4-5-20250929",
-        max_tokens=int(Config.get("ai.max_output_tokens", 4096)),
+        max_tokens=actual_max,
         temperature=float(Config.get("ai.temperature", 0.0)),
         system=system_msg,
         messages=messages,
@@ -348,17 +448,21 @@ def _call_anthropic_chat(messages: list[dict], model: str, system_msg: str) -> s
     )
 
 
-def _call_openai_chat(messages: list[dict], model: str, system_msg: str) -> str:
+def _call_openai_chat(
+    messages: list[dict], model: str, system_msg: str,
+    max_tokens: int | None = None,
+) -> str:
     from openai import OpenAI
     key = get_secret(OPENAI_KEY)
     if not key:
         raise RuntimeError("OpenAI API key not set (Settings page).")
     client = OpenAI(api_key=key)
     all_msgs = [{"role": "system", "content": system_msg}] + messages
+    actual_max = max_tokens if max_tokens is not None else int(Config.get("ai.max_output_tokens", 4096))
     resp = client.chat.completions.create(
         model=model or "gpt-4o",
         temperature=float(Config.get("ai.temperature", 0.0)),
-        max_tokens=int(Config.get("ai.max_output_tokens", 4096)),
+        max_tokens=actual_max,
         messages=all_msgs,
     )
     return resp.choices[0].message.content or ""

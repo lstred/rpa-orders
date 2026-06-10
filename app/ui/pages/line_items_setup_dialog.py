@@ -51,7 +51,7 @@ from app.extraction.ai_extractor import analyze_line_items_with_ai, ai_enabled
 # ──────────────────────────────────────────────────────────────────────────────
 
 class _AIWorker(QObject):
-    finished = Signal(list, str)   # (items, ai_text)
+    finished = Signal(list, str, str)  # (items, ai_text, user_content_sent)
     failed   = Signal(str)
 
     def __init__(self, document_text: str, instruction: str, conversation: list) -> None:
@@ -62,10 +62,10 @@ class _AIWorker(QObject):
 
     def run(self) -> None:
         try:
-            items, reply = analyze_line_items_with_ai(
+            items, reply, user_content = analyze_line_items_with_ai(
                 self.document_text, self.instruction, self.conversation
             )
-            self.finished.emit(items, reply)
+            self.finished.emit(items, reply, user_content)
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))
 
@@ -321,13 +321,13 @@ class LineItemsSetupDialog(QDialog):
         self._worker.failed.connect(self._thread.quit)
         self._thread.start()
 
-    def _on_ai_done(self, items: list, ai_text: str) -> None:
+    def _on_ai_done(self, items: list, ai_text: str, user_content: str) -> None:
         self._progress.setVisible(False)
         self._analyze_btn.setEnabled(True)
 
-        # Record the turn for multi-turn context
-        instruction = getattr(self, "_last_instruction", "")
-        self._conversation.append({"role": "user", "content": instruction or "(auto-analyze)"})
+        # Record the full user content (including document text on first turn) so
+        # subsequent turns can reference the document via the conversation context.
+        self._conversation.append({"role": "user", "content": user_content})
         self._conversation.append({"role": "assistant", "content": ai_text})
 
         n = len(items)
